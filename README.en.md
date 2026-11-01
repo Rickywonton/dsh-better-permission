@@ -205,7 +205,7 @@ packages/better-permit/         Host half
   lib/session-rules.js             per-conversation command allow-rule storage
   lib/journal.js                   recent auto-approval records
   cordis.patch.yml                 tier table + plugin mount line
-  test/engine.test.mjs             188 offline checks
+  test/engine.test.mjs             191 offline checks
 packages/better-permit-ui/      browser half
   client.js                        approval detail component + Settings page panel
   test/client.smoke.mjs            smoke test (own hooks engine, really renders components)
@@ -219,7 +219,7 @@ Only Node is needed (no third-party dependencies, no build step):
 
 ```pwsh
 cd packages/better-permit
-node test/engine.test.mjs        # 188 checks
+node test/engine.test.mjs        # 191 checks
 
 cd ../better-permit-ui
 node test/client.smoke.mjs       # 71 checks: render + interaction smoke test

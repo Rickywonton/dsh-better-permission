@@ -15,6 +15,8 @@
 
 ## 0.6.0 — 2026-11-01
 
+发布说明（GitHub Release 用）：[`docs/releases/v0.6.0.md`](releases/v0.6.0.md)
+
 ### 为什么改
 
 审批弹窗只告诉用户"某个工具想执行"，看不懂的命令（尤其 `Remove-Item`、`reg add` 这类）

@@ -267,7 +267,7 @@ skill 路径、受信清单与本对话放行规则，以及最近 8 条自动�
 ## 开发
 
 ```pwsh
-node test/engine.test.mjs    # 188 项离线断言：风险分级、档位上限、信任判定、放行规则、评审模型、习惯、暂缓、审批解释、每轮报告、waterfall 集成、命令、回环 API、面板端点
+node test/engine.test.mjs    # 191 项离线断言：风险分级、档位上限、信任判定、放行规则、评审模型、习惯、暂缓、审批解释、每轮报告、waterfall 集成、命令、回环 API、面板端点
 ```
 
 浏览器半区在旁边的 `../better-permit-ui`（`better-permit-ui`）：那里有 `client.js`

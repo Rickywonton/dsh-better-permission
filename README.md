@@ -203,7 +203,7 @@ packages/better-permit/         Host 半区
   lib/session-rules.js             按对话的命令放行规则存储
   lib/journal.js                   最近自动放行记录
   cordis.patch.yml                 档位表 + 插件挂载行
-  test/engine.test.mjs             188 项离线断言
+  test/engine.test.mjs             191 项离线断言
 packages/better-permit-ui/      浏览器半区
   client.js                        审批详情组件 + 设置页面板
   test/client.smoke.mjs            冒烟测试（自带 hooks 引擎，真渲染组件）
@@ -217,7 +217,7 @@ docs/RELEASES.md                   每个版本改了什么
 
 ```pwsh
 cd packages/better-permit
-node test/engine.test.mjs        # 188 checks
+node test/engine.test.mjs        # 191 checks
 
 cd ../better-permit-ui
 node test/client.smoke.mjs       # 71 checks：渲染 + 交互冒烟

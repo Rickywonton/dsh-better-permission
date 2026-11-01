@@ -30,10 +30,11 @@ export function groupEntries(entries) {
   const rows = new Map()
   let ai = 0
   for (const entry of entries) {
-    const key = `${entry.signature ?? entry.tool ?? 'unknown'}\u0000${entry.risk ?? ''}`
+    const label = entry.signature || entry.tool || 'unknown'
+    const key = `${label}\u0000${entry.risk ?? ''}`
     const row = rows.get(key)
     if (row === undefined) {
-      rows.set(key, { signature: entry.signature ?? entry.tool ?? 'unknown', risk: entry.risk ?? 'unknown', count: 1, source: entry.source ?? 'tier' })
+      rows.set(key, { signature: label, risk: entry.risk ?? 'unknown', count: 1, source: entry.source ?? 'tier' })
     } else {
       row.count += 1
       if (row.source !== 'ai' && entry.source === 'ai') row.source = 'ai'

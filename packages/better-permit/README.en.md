@@ -263,7 +263,7 @@ to a package after it was installed is never discovered. The browser half is the
 ## Development
 
 ```pwsh
-node test/engine.test.mjs    # 188 offline checks: risk grading, tier ceilings, trust decisions, allow rules, reviewer model, habits, deferral, approval explanation, per-turn report, waterfall integration, commands, loopback API, panel endpoints
+node test/engine.test.mjs    # 191 offline checks: risk grading, tier ceilings, trust decisions, allow rules, reviewer model, habits, deferral, approval explanation, per-turn report, waterfall integration, commands, loopback API, panel endpoints
 ```
 
 The browser half lives next door in `../better-permit-ui` (`better-permit-ui`): `client.js` and its own smoke test (`node test/client.smoke.mjs`).

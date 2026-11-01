@@ -598,6 +598,8 @@ console.log('commands and loopback API')
   check('the report totals the turn', reportText.includes('本轮自动放行 2 次'), true)
   check('the report names the command class', reportText.includes('dir ×2'), true)
   check('the report never renders an empty turn', renderReport([], { risk: (key) => key }), '')
+  const fallbackRow = groupEntries([{ tool: 'fs_write', risk: 'write', source: 'tier' }])
+  check('a call without a signature falls back to its tool', fallbackRow.rows[0].signature, 'fs_write')
 
   // A tier-approved read call is remembered, then reported when the turn closes.
   await listeners.get('tools/pre-execute')[0](
@@ -623,6 +625,26 @@ console.log('commands and loopback API')
   const reported = await call('GET', '/better-permit/approval/panel')
   check('the panel keeps the finished report', reported.body.reports.length, 1)
   check('the report records the turn number', reported.body.reports[0].turn, 1)
+
+  // A plugin action has no command signature: the report must still name it.
+  await listeners.get('tools/pre-execute')[0](
+    { callId: 'p1', name: 'plugin_manager', arguments: { action: 'list_bundles' }, agent: { session } },
+    async () => ({ kind: 'ask' }),
+  )
+  const pluginAllowed = await listeners.get('approval/request')[0](
+    {
+      toolName: 'plugin_manager',
+      callId: 'p1',
+      reason: 'escalate sandbox to danger-full-access: plugin_manager {"action":"list_bundles"}',
+      agent: { session },
+    },
+    async () => 'unavailable',
+  )
+  check('listing plugins is auto-approved on the edit tier', pluginAllowed, 'allowed-once')
+  appended.length = 0
+  await stop({ agent: { session }, turn: 2, signal: new AbortController().signal })
+  const pluginReport = appended.find((entry) => entry.type === 'developer/message')
+  check('a plugin action is reported by tool and action', pluginReport.data.message.content[0].text.includes('plugin_manager list_bundles ×1'), true)
 }
 
 console.log('approval hold')

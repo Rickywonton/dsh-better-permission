@@ -383,12 +383,22 @@ export function apply(ctx, config) {
     return 'rejected'
   }
 
+  /** A readable row label for the report: the command signature when there is one. */
+  function entryLabel(decision, request) {
+    const signature = decision?.risk?.signature
+    if (typeof signature === 'string' && signature.length > 0) return signature
+    const tool = request?.toolName ?? 'tool'
+    const args = decision?.snapshot?.args
+    const action = args !== null && typeof args === 'object' && typeof args.action === 'string' ? args.action : ''
+    return action ? `${tool} ${action}` : tool
+  }
+
   /** Remember one auto-answered approval so the turn can report it. */
   function noteAuto(sessionId, decision, request, source) {
     try {
       reports.note(sessionId, {
         tool: request?.toolName,
-        signature: decision?.risk?.signature ?? request?.toolName,
+        signature: entryLabel(decision, request),
         risk: decision?.risk?.key,
         source,
         tier: decision?.tier,
