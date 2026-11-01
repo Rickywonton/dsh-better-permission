@@ -110,12 +110,19 @@ DSH 的 skill 目录是热加载的，写完即生效。
 每次弹窗里都有一段中文说明（`GET /better-permit/approval/detail` 的 `explain` 字段）：
 
 ```json
-{ "sentence": "这一步会递归删除系统驱动目录，可能让设备无法启动。", "source": "model" }
+{
+  "sentence": "会改动系统层面的配置或系统目录，出错可能影响整台机器。当前档位「工作区内 · 写入自动」只自动放行到「写入」这一档，所以来问你。",
+  "source": "local",
+  "level": "danger"
+}
 ```
 
-- `source: "model"`：评审模型已配置，由它写一句（≤60 字，只讲"在做什么 + 最坏后果"）。
-- `source: "local"`：模型没配、超时（6 秒上限）、报错或答空时，用命令、工作目录、风险等级与
-  "档位为什么没放行它"拼出的确定性说明。
+- **不重复命令**：命令、工作目录、风险徽标弹窗里已经有，解释只补「后果」和「为什么问你」。
+- `source: "model"`：评审模型已配置时由它写一句（≤40 字，禁止复述命令、禁止引用代码）；
+  看不出用途时它会直接说「按较高风险对待」。
+- `source: "local"`：模型没配、超时（6 秒上限）、报错或答空时，用风险等级对应的后果分析
+  （只读 / 写入 / 删除覆盖 / 系统层 / 工作区外 / 对外发布 / 无法识别）加一句档位说明。
+- `level`：`safe` / `caution` / `danger` 三档，弹窗里渲染成彩色徽标，避免"无法判断"的观感。
 - 解释按 `callId` 缓存，弹窗反复取数不会重复问模型。
 
 ## 每轮自动放行报告
@@ -203,7 +210,7 @@ packages/better-permit/         Host 半区
   lib/session-rules.js             按对话的命令放行规则存储
   lib/journal.js                   最近自动放行记录
   cordis.patch.yml                 档位表 + 插件挂载行
-  test/engine.test.mjs             191 项离线断言
+  test/engine.test.mjs             198 项离线断言
 packages/better-permit-ui/      浏览器半区
   client.js                        审批详情组件 + 设置页面板
   test/client.smoke.mjs            冒烟测试（自带 hooks 引擎，真渲染组件）
@@ -217,10 +224,10 @@ docs/RELEASES.md                   每个版本改了什么
 
 ```pwsh
 cd packages/better-permit
-node test/engine.test.mjs        # 191 checks
+node test/engine.test.mjs        # 198 checks
 
 cd ../better-permit-ui
-node test/client.smoke.mjs       # 71 checks：渲染 + 交互冒烟
+node test/client.smoke.mjs       # 72 checks：渲染 + 交互冒烟
 ```
 
 测试用临时目录做夹具，Windows 与 Linux 都能跑（CI 里两边都跑一遍）。

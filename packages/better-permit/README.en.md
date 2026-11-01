@@ -117,11 +117,19 @@ skillDir: D:\dsh-home\skills   # default <DSH_HOME>/skills
 Every dialog carries a Chinese explanation (`lib/explain.js`, the `explain` of `GET /better-permit/approval/detail`):
 
 ```json
-{ "sentence": "This step recursively deletes the system driver directory and may leave the device unable to boot.", "local": "…", "source": "model" }
+{
+  "sentence": "This deletes or overwrites existing content, and deleted files usually cannot be recovered. ...",
+  "local": "…",
+  "source": "local",
+  "level": "danger",
+  "risk": { "key": "destructive", "label": "delete / overwrite", "hint": "deletes or overwrites existing files" }
+}
 ```
 
-- `source: "model"`: a reviewer model is configured; ask it for one sentence (at most 60 characters, covering only "what it is doing + the worst consequence"), with a 6-second cap.
-- `source: "local"`: when the model is not configured / times out / errors / returns nothing, a deterministic explanation composed from the command, working directory, risk grade, `RISK_HINTS` and "why the tier did not approve it".
+- **Consequence and reason only**: the command, working directory and risk badge are already in the dialog, so nothing here repeats the command or quotes its arguments.
+- `source: "model"`: when a reviewer model is configured it writes one sentence (at most 40 characters, forbidden from restating the command or quoting code), 6-second cap.
+- `source: "local"`: when the model is not configured / times out / errors / returns nothing, the explanation is `analysisOf(risk.key)` (read / write / destructive / system / outside / publish / unknown) plus one line about why the tier is asking.
+- `level`: `safe` / `caution` / `danger`, rendered as a coloured badge; `unknown` is always `danger` and the text states it is treated as high risk, so the dialog never reads as "cannot judge".
 - Explanations are cached by `callId` (at most 32), so repeated dialog fetches do not ask the model again.
 
 ## Per-turn auto-approval report
@@ -263,7 +271,7 @@ to a package after it was installed is never discovered. The browser half is the
 ## Development
 
 ```pwsh
-node test/engine.test.mjs    # 191 offline checks: risk grading, tier ceilings, trust decisions, allow rules, reviewer model, habits, deferral, approval explanation, per-turn report, waterfall integration, commands, loopback API, panel endpoints
+node test/engine.test.mjs    # 198 offline checks: risk grading, tier ceilings, trust decisions, allow rules, reviewer model, habits, deferral, approval explanation, per-turn report, waterfall integration, commands, loopback API, panel endpoints
 ```
 
 The browser half lives next door in `../better-permit-ui` (`better-permit-ui`): `client.js` and its own smoke test (`node test/client.smoke.mjs`).

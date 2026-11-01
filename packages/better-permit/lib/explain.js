@@ -1,58 +1,82 @@
 /**
  * Plain-language explanations for a pending approval.
  *
- * Every dialog gets a deterministic Chinese account built from the call itself
- * (command, tool, risk grade, why the tier did not cover it). When the user has
- * configured a reviewer model, the same model is asked for one short Chinese
- * sentence about what the operation does and what could go wrong; a model that
- * is slow, unreachable, or chatty is ignored rather than allowed to block the
- * dialog.
+ * The dialog already shows the command, the working folder and the risk badge,
+ * so an explanation must add judgement instead of repeating them: what the step
+ * is for, what could go wrong, and why the active tier refused to answer it on
+ * its own. With a reviewer model configured the sentence comes from that model;
+ * otherwise it is composed from the risk grade — never from the command text.
  */
 
 const SYSTEM_PROMPT = [
-  '你是审批弹窗里的解释员。给你一次即将执行的工具调用及其风险等级。',
-  '用一句中文（不超过 60 个字）说明：这步在做什么，最坏会有什么后果。',
-  '只输出这一句话，不要编号、不要 Markdown、不要引号、不要复述命令全文。',
+  '你是审批弹窗里的解释员。用户已经看到命令和风险等级，不要复述命令、不要引用代码、不要提规则表。',
+  '用一句中文（不超过 40 字）说明：这步打算达成什么目的，最坏会失去什么。',
+  '语气像同事提醒，不要客套，不要编号，不要 Markdown，不要引号，不要结尾句号之外的多余标点。',
+  '如果从命令里看不出用途，就直接说按较高风险对待，并指出该盯住哪里。',
 ].join('\n')
 
-/** Trim text for one-line display without cutting a surrogate pair. */
-function clip(text, limit) {
-  const value = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : ''
-  if (value.length <= limit) return value
-  return `${value.slice(0, limit - 1)}…`
+/**
+ * How serious a risk grade is, for the badge the dialog shows.
+ * @param key - a risk key from the grader.
+ * @returns `'safe'`, `'caution'` or `'danger'`.
+ */
+export function levelOf(key) {
+  if (key === 'read') return 'safe'
+  if (key === 'write') return 'caution'
+  return 'danger'
 }
 
 /**
- * Build the deterministic part of the explanation.
- * @param input - tool name, arguments, risk grade, tier rules and verdict.
- * @returns a short Chinese account that never depends on a model.
+ * One analytical sentence per risk grade: consequence first, no command echo.
+ * @param key - a risk key from the grader.
+ * @returns the sentence describing what could be lost.
+ */
+export function analysisOf(key) {
+  switch (key) {
+    case 'read':
+      return '只是读取信息，不会改动或删除任何东西。'
+    case 'write':
+      return '会在工作区内产生改动，可能覆盖同名文件；一般可以重来。'
+    case 'destructive':
+      return '会删除或覆盖已有内容，删掉的东西通常无法恢复。'
+    case 'system':
+      return '会改动系统层面的配置或系统目录，出错可能影响整台机器。'
+    case 'outside':
+      return '会动到工作区之外的文件，没有沙箱兜底。'
+    case 'publish':
+      return '会把内容发到外部（推送或上传），发出去就收不回。'
+    default:
+      return '从命令本身看不出用途，按较高风险对待，建议先确认它要动什么。'
+  }
+}
+
+/**
+ * Build the deterministic explanation: what could go wrong, then why it asks.
+ * @param input - risk grade, active tier rules and the refusal detail.
+ * @returns a short Chinese account that never repeats the command.
  */
 export function localExplanation(input) {
   const risk = input?.risk
-  const tier = input?.tier
-  const rules = input?.rules
-  const args = input?.args ?? {}
-  const command = typeof args?.command === 'string' ? clip(args.command, 140) : ''
-  const cwd = typeof args?.cwd === 'string' ? args.cwd : typeof args?.workdir === 'string' ? args.workdir : ''
-  const lines = []
-  if (command) lines.push(`这一步要执行的命令是「${command}」${cwd ? `，工作目录 ${cwd}` : ''}。`)
-  else if (input?.tool && input.tool !== 'pwsh' && input.tool !== 'bash') lines.push(`这一步会调用工具「${input.tool}」${describeArgs(args)}。`)
-  if (risk?.hint) lines.push(`风险等级是「${risk.label ?? risk.key}」：${risk.hint}`)
-  if (Array.isArray(risk?.reasons) && risk.reasons.length > 0) lines.push(`判断依据：${risk.reasons.slice(0, 3).join('；')}。`)
-  if (input?.detail) lines.push(`当前档位没有自动放行它（${input.detail}），所以来问你。`)
-  else if (rules?.label) lines.push(`当前档位「${rules.label}」没有覆盖这一步，所以来问你。`)
+  const tier = input?.rules
+  const lines = [analysisOf(risk?.key)]
+  if (tier?.label) {
+    const ceiling = tier.maxRiskLabel ?? tier.maxRisk
+    lines.push(
+      ceiling && ceiling !== '不自动放行'
+        ? `当前档位「${tier.label}」只自动放行到「${ceiling}」这一档，所以来问你。`
+        : `当前档位「${tier.label}」不放行这一类操作，所以来问你。`,
+    )
+  } else if (input?.detail) {
+    lines.push('当前档位没有覆盖这一步，所以来问你。')
+  }
   return lines.join('')
 }
 
-/** Describe a few tool arguments so a non-shell call still reads like a sentence. */
-function describeArgs(args) {
-  if (args === null || typeof args !== 'object') return ''
-  const keys = Object.keys(args).slice(0, 3).map((key) => {
-    const value = args[key]
-    const shown = typeof value === 'string' ? clip(value, 60) : Array.isArray(value) ? `${value.length} 项` : typeof value
-    return `${key}=${shown}`
-  })
-  return keys.length === 0 ? '' : `（${keys.join('，')}）`
+/** Keep a model answer to one short line. */
+function clip(text, limit) {
+  const value = typeof text === 'string' ? text.replace(/[\s]+/g, ' ').trim() : ''
+  if (value.length <= limit) return value
+  return `${value.slice(0, limit - 1)}…`
 }
 
 /**
@@ -74,7 +98,7 @@ export async function askForSentence(config, input) {
       body: JSON.stringify({
         model: config.model,
         temperature: 0.2,
-        max_tokens: 160,
+        max_tokens: 120,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           {
@@ -84,9 +108,8 @@ export async function askForSentence(config, input) {
               `命令：${clip(input?.args?.command ?? '', 300) || '(不是 shell 命令)'}`,
               `工作目录：${input?.args?.cwd ?? input?.args?.workdir ?? '(默认)'}`,
               `风险等级：${input?.risk?.label ?? input?.risk?.key ?? 'unknown'}`,
-              `风险说明：${input?.risk?.hint ?? ''}`,
-              `判断依据：${(input?.risk?.reasons ?? []).join('；') || '(无)'}`,
-              `档位「${input?.rules?.label ?? input?.tier ?? 'unknown'}」没有自动放行它。`,
+              `该类风险的含义：${analysisOf(input?.risk?.key)}`,
+              `档位：${input?.rules?.label ?? input?.tier ?? 'unknown'}，自动放行上限 ${input?.rules?.maxRiskLabel ?? '未知'}`,
             ].join('\n'),
           },
         ],
@@ -96,7 +119,7 @@ export async function askForSentence(config, input) {
     if (!response.ok) return { sentence: '', reason: `HTTP ${response.status}` }
     const payload = await response.json()
     const raw = payload?.choices?.[0]?.message?.content
-    const sentence = clip(typeof raw === 'string' ? raw : '', 160)
+    const sentence = clip(typeof raw === 'string' ? raw : '', 120)
     return { sentence, reason: sentence ? 'ok' : 'empty answer' }
   } catch (error) {
     return { sentence: '', reason: error?.name === 'AbortError' ? 'timeout' : String(error?.message ?? error) }
@@ -117,17 +140,21 @@ export function createExplainer({ config, journal }) {
     /**
      * Explain one pending call in Chinese.
      * @param input - tool, arguments, risk grade, tier rules and verdict detail.
-     * @returns `{ sentence, local, source }`; `source` says who wrote `sentence`.
+     * @returns `{ sentence, local, source, level, risk }`; `source` says who wrote `sentence`.
      */
     async explain(input) {
       const local = localExplanation(input)
-      if (!configured()) return { sentence: local, local, source: 'local' }
+      const level = levelOf(input?.risk?.key)
+      const risk = input?.risk
+        ? { key: input.risk.key, label: input.risk.label, hint: input.risk.hint }
+        : undefined
+      if (!configured()) return { sentence: local, local, source: 'local', level, risk }
       const answer = await askForSentence(config, input)
       if (!answer.sentence) {
         journal?.record?.({ at: Date.now(), tier: input?.tier, tool: input?.tool, category: 'explain', detail: `模型没有给出解释：${answer.reason}` })
-        return { sentence: local, local, source: 'local' }
+        return { sentence: local, local, source: 'local', level, risk }
       }
-      return { sentence: answer.sentence, local, source: 'model' }
+      return { sentence: answer.sentence, local, source: 'model', level, risk }
     },
   }
 }

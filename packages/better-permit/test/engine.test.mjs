@@ -26,7 +26,7 @@ import { createSessionRules } from '../lib/session-rules.js'
 import { createHabits } from '../lib/habits.js'
 import { createDeferrals, guidanceFor } from '../lib/hold.js'
 import { createAiGrader } from '../lib/ai.js'
-import { localExplanation } from '../lib/explain.js'
+import { localExplanation, levelOf } from '../lib/explain.js'
 import { renderReport, groupEntries } from '../lib/reports.js'
 import { apply } from '../index.js'
 
@@ -567,18 +567,27 @@ console.log('commands and loopback API')
   const explained = await call('GET', '/better-permit/approval/detail?sessionId=sess-1&callId=x1')
   check('the detail carries an explanation', typeof explained.body.explain?.sentence, 'string')
   check('an offline reviewer falls back to the local account', explained.body.explain.source, 'local')
-  check('the fallback names the command', explained.body.explain.sentence.includes('Remove-Item'), true)
-  check('the fallback names the risk', explained.body.explain.sentence.includes('系统层'), true)
+  check('the fallback explains the consequence', explained.body.explain.sentence.includes('系统层面'), true)
+  check('the fallback never repeats the command', explained.body.explain.sentence.includes('Remove-Item'), false)
+  check('an unreachable reviewer still grades the danger', explained.body.explain.level, 'danger')
+  check('the explanation carries the risk label', explained.body.explain.risk?.label, '系统层')
   delete globalThis.fetch
 
   const plain = localExplanation({
     tool: 'fs_write',
     args: { path: 'notes.md', text: 'hi' },
     risk: { key: 'write', label: '写入', hint: '会修改文件' },
-    rules: { label: '工作区内 · 写入自动' },
+    rules: { label: '工作区内 · 写入自动', maxRiskLabel: '写入' },
   })
-  check('a non-shell call is still described', plain.includes('fs_write'), true)
-  check('a non-shell call lists its arguments', plain.includes('path=notes.md'), true)
+  check('a non-shell call analyses a consequence', plain.includes('工作区内'), true)
+  check('an unknown grade is treated as dangerous', levelOf('unknown'), 'danger')
+  check('a read grade is safe', levelOf('read'), 'safe')
+  check('a write grade needs care', levelOf('write'), 'caution')
+  const withTier = localExplanation({ risk: { key: 'destructive' }, rules: { label: '工作区内 · AI 判定', maxRiskLabel: '写入' } })
+  check('the account says what this tier stops at', withTier.includes('只自动放行到「写入」这一档'), true)
+  check('the account says why it is asking', withTier.includes('所以来问你'), true)
+  const noCeiling = localExplanation({ risk: { key: 'destructive' }, rules: { label: '工作区内 · 只读', maxRiskLabel: '不自动放行' } })
+  check('a tier that approves nothing is described as such', noCeiling.includes('不放行这一类操作'), true)
 
   const grouped = groupEntries([
     { signature: 'pnpm install', risk: 'write', source: 'tier' },

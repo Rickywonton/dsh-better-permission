@@ -117,12 +117,21 @@ skillDir: D:\dsh-home\skills   # 默认 <DSH_HOME>/skills
 每次弹窗都带一段中文解释（`lib/explain.js`，端点 `GET /better-permit/approval/detail` 的 `explain`）：
 
 ```json
-{ "sentence": "这一步会递归删除系统驱动目录，可能让设备无法启动。", "local": "…", "source": "model" }
+{
+  "sentence": "会删除或覆盖已有内容，删掉的东西通常无法恢复。当前档位「工作区内 · AI 判定」只自动放行到「写入」这一档，所以来问你。",
+  "local": "…",
+  "source": "local",
+  "level": "danger",
+  "risk": { "key": "destructive", "label": "删除/覆盖", "hint": "会删除或覆盖已有文件" }
+}
 ```
 
-- `source: "model"`：评审模型已配置，问它一句（≤60 字，只讲"在做什么 + 最坏后果"），6 秒上限。
-- `source: "local"`：模型没配 / 超时 / 报错 / 答空时，用命令、工作目录、风险等级、`RISK_HINTS`
-  与"档位为什么没放行它"拼出的确定性说明。
+- **只讲后果与原因**：命令、工作目录、风险徽标弹窗里已有，解释不重复命令、不引用参数。
+- `source: "model"`：评审模型已配置时问它一句（≤40 字，禁止复述命令与代码），6 秒上限。
+- `source: "local"`：模型没配 / 超时 / 报错 / 答空时，用 `analysisOf(risk.key)` 的后果分析
+  （只读 / 写入 / 删除覆盖 / 系统层 / 工作区外 / 对外发布 / 无法识别）加一句档位说明。
+- `level`：`safe` / `caution` / `danger`，弹窗渲染成彩色徽标；`unknown` 一律 `danger`，
+  解释里明说「按较高风险对待」，不会出现「无法判断」。
 - 解释按 `callId` 缓存（最多 32 条），弹窗反复取数不会重复问模型。
 
 ## 每轮自动放行报告
@@ -267,7 +276,7 @@ skill 路径、受信清单与本对话放行规则，以及最近 8 条自动�
 ## 开发
 
 ```pwsh
-node test/engine.test.mjs    # 191 项离线断言：风险分级、档位上限、信任判定、放行规则、评审模型、习惯、暂缓、审批解释、每轮报告、waterfall 集成、命令、回环 API、面板端点
+node test/engine.test.mjs    # 198 项离线断言：风险分级、档位上限、信任判定、放行规则、评审模型、习惯、暂缓、审批解释、每轮报告、waterfall 集成、命令、回环 API、面板端点
 ```
 
 浏览器半区在旁边的 `../better-permit-ui`（`better-permit-ui`）：那里有 `client.js`

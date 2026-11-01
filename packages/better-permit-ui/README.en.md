@@ -6,7 +6,7 @@ The browser half of `better-permit` (all Host behavior lives there):
 
 - `client.js` — two pieces of UI:
   1. **Approval dialog detail**: command text, risk badge (read-only/write/destructive/system layer/publish...), why this tier is asking,
-     a **Chinese explanation paragraph** (one sentence written by the model when a reviewer is configured, otherwise a deterministic account),
+     an **explanation paragraph** (with a coloured safe / careful / high-risk badge; the text analyses the consequence instead of restating the command),
      and two shortcut buttons: **"Always allow this command in this conversation"** (records the signature in this conversation's allow rules) and
      **"Trust this folder and allow this call (this conversation only)"**. Both approve the current call directly after the write succeeds.
   2. **Settings page "Permissions"**: tier and auto-approval scope table, risk legend, reviewer model, approval wait, approval habits,
@@ -36,12 +36,15 @@ and it takes effect immediately.
   throws `TypeError: selector is not a function`; React swallows the whole block, so the Settings page looks blank,
   and because the render never commits, the data-fetching `useEffect` never runs at all. The correct form passes a stable selector:
   `const selectAll = (value) => value` (module-level constant), then `props.useSessions(selectAll)`.
+- **Never paint a button with the brand token plus white text**: the brand colour is not guaranteed to contrast with
+  white, and a missing token renders as a blank white pill. Primary buttons therefore use a raised surface with a
+  brand-coloured border and text (`primaryButton`), which reads in both light and dark themes.
 - When registering, `inject`'s return value is merged into props (this page uses `inject: () => ({ pick })` to get the directory picker).
 
 ## Development
 
 ```pwsh
-node test/client.smoke.mjs   # 71 checks: module evaluates, both slots register, every panel section renders, both approval detail buttons really send requests
+node test/client.smoke.mjs   # 72 checks: module evaluates, both slots register, every panel section renders, both approval detail buttons really send requests
 ```
 
 The smoke test runs the component for real with a small hooks engine (including fetch stubs for `/panel` and `/detail`),

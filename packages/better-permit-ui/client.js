@@ -111,8 +111,11 @@ window.__ModuleLoader__.load({
       skillDone: '已写入',
       aiBadge: 'AI 判定',
       aiDetailAsk: '本档位会先问评审模型 %s（置信度 ≥ %s）再决定是否打扰你',
-  explainAi: '评审模型的解释',
-  explainLocal: '这一步在做什么',
+  explainAi: '评审模型判断',
+  explainLocal: '按风险等级判断',
+  levelSafe: '安全',
+  levelCaution: '需留意',
+  levelDanger: '高风险',
   reportsTitle: '每轮自动放行报告',
   reportsCount: '共 %s 次自动放行',
   reportsHint: 'AI 判定档位下，每轮对话结束时会把这一轮自动放行的审批汇总成一条报告写进对话；这里保留最近几条。',
@@ -211,8 +214,11 @@ window.__ModuleLoader__.load({
       skillDone: 'Written',
       aiBadge: 'AI verdict',
       aiDetailAsk: 'This tier asks the review model %s first (confidence ≥ %s) before deciding whether to bother you',
-  explainAi: 'Review model explanation',
-  explainLocal: 'What this step does',
+  explainAi: 'reviewer judgement',
+  explainLocal: 'graded by risk level',
+  levelSafe: 'Safe',
+  levelCaution: 'Careful',
+  levelDanger: 'High risk',
   reportsTitle: 'Per-turn auto-approval report',
   reportsCount: '%s auto-approved',
   reportsHint: 'On the AI tier, each turn ends by appending one report of the approvals it answered for you; the latest ones stay here.',
@@ -259,7 +265,16 @@ window.__ModuleLoader__.load({
       cursor: 'pointer',
       flex: '0 0 auto',
     }
-    const primaryButton = Object.assign({}, buttonStyle, { background: 'var(--dsw-alias-brand-primary)', borderColor: 'var(--dsw-alias-brand-primary)', color: '#fff' })
+    // Filled buttons are not dependable across themes: the brand token is not
+    // guaranteed to contrast with white text, and an unknown token renders as a
+    // blank white pill. Primary actions therefore stay on a raised surface with
+    // a brand border and brand text, which reads in both light and dark themes.
+    const primaryButton = Object.assign({}, buttonStyle, {
+      background: 'var(--dsw-alias-bg-layer-2)',
+      borderColor: 'var(--dsw-alias-brand-primary)',
+      color: 'var(--dsw-alias-brand-primary)',
+      fontWeight: '500',
+    })
     const disabledButton = { opacity: 0.55, cursor: 'default' }
     const quietButton = {
       border: '1px solid var(--dsw-alias-border-l1)',
@@ -471,8 +486,16 @@ window.__ModuleLoader__.load({
         : ''
       const explain = detail.explain && typeof detail.explain === 'object' ? detail.explain : null
       const explainLine = explain && typeof explain.sentence === 'string' && explain.sentence.length > 0
-        ? `${explain.source === 'model' ? t('explainAi') : t('explainLocal')}：${explain.sentence}`
+        ? explain.sentence
         : ''
+      const levelKey = explain && typeof explain.level === 'string' ? explain.level : ''
+      const levelLabel = levelKey === 'safe' ? t('levelSafe') : levelKey === 'caution' ? t('levelCaution') : levelKey === 'danger' ? t('levelDanger') : ''
+      const levelColor = levelKey === 'safe'
+        ? 'var(--dsw-alias-state-success-primary)'
+        : levelKey === 'caution'
+          ? 'var(--dsw-alias-state-warn-primary)'
+          : 'var(--dsw-alias-state-error-primary)'
+      const explainSource = explain && explain.source === 'model' ? t('explainAi') : t('explainLocal')
       const tierLine = detail.tier && !detail.covered && detail.tier.key
         ? `档位「${detail.tier.label}」${t('ceiling')}：${detail.tier.maxRiskLabel}${detail.tier.alwaysAsk.length ? ` · ${t('alwaysAskLabel')} ${detail.tier.alwaysAsk.join('、')}` : ''}`
         : detail.covered
@@ -501,6 +524,9 @@ window.__ModuleLoader__.load({
               'div',
               {
                 style: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '3px',
                   fontSize: '12px',
                   lineHeight: '18px',
                   padding: '7px 9px',
@@ -510,7 +536,28 @@ window.__ModuleLoader__.load({
                   color: 'var(--dsw-alias-label-primary)',
                 },
               },
-              explainLine,
+              h(
+                'div',
+                { style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--dsw-alias-label-tertiary)' } },
+                levelLabel
+                  ? h(
+                      'span',
+                      {
+                        style: {
+                          padding: '0 6px',
+                          borderRadius: '999px',
+                          border: `1px solid ${levelColor}`,
+                          color: levelColor,
+                          lineHeight: '16px',
+                          flex: '0 0 auto',
+                        },
+                      },
+                      levelLabel,
+                    )
+                  : null,
+                h('span', null, explainSource),
+              ),
+              h('span', null, explainLine),
             )
           : null,
         tierLine

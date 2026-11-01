@@ -113,11 +113,17 @@ DSH's skill directory is hot-reloaded, so the file takes effect as soon as it is
 Every dialog carries a Chinese explanation (the `explain` field of `GET /better-permit/approval/detail`):
 
 ```json
-{ "sentence": "This step recursively deletes the system driver directory and may leave the device unable to boot.", "source": "model" }
+{
+  "sentence": "This deletes or overwrites existing content, and deleted files usually cannot be recovered. Tier \"workspace-write · AI review\" only approves up to \"write\", so it asks you.",
+  "source": "local",
+  "level": "danger"
+}
 ```
 
-- `source: "model"`: a reviewer model is configured and writes one sentence (at most 60 characters, covering only "what it is doing + the worst consequence").
-- `source: "local"`: when the model is not configured, times out (6-second cap), errors or returns nothing, a deterministic explanation composed from the command, working directory, risk grade and "why the tier did not approve it".
+- **Consequence and reason only**: the command, working directory and risk badge are already in the dialog, so the explanation never repeats the command or its arguments.
+- `source: "model"`: when a reviewer model is configured it writes one sentence (at most 40 characters, forbidden from restating the command or quoting code); when it cannot tell what the step does it says so and treats it as high risk.
+- `source: "local"`: when the model is not configured, times out (6-second cap), errors or returns nothing, the explanation is the consequence analysis for the risk grade (read / write / destructive / system / outside / publish / unknown) plus one line about why the tier is asking.
+- `level`: `safe` / `caution` / `danger`, rendered as a coloured badge in the dialog; `unknown` is always `danger` and the text says "treated as high risk", so the dialog never reads as "cannot judge".
 - Explanations are cached by `callId`, so repeated dialog fetches do not ask the model again.
 
 ## Per-turn auto-approval report
@@ -205,7 +211,7 @@ packages/better-permit/         Host half
   lib/session-rules.js             per-conversation command allow-rule storage
   lib/journal.js                   recent auto-approval records
   cordis.patch.yml                 tier table + plugin mount line
-  test/engine.test.mjs             191 offline checks
+  test/engine.test.mjs             198 offline checks
 packages/better-permit-ui/      browser half
   client.js                        approval detail component + Settings page panel
   test/client.smoke.mjs            smoke test (own hooks engine, really renders components)
@@ -219,10 +225,10 @@ Only Node is needed (no third-party dependencies, no build step):
 
 ```pwsh
 cd packages/better-permit
-node test/engine.test.mjs        # 191 checks
+node test/engine.test.mjs        # 198 checks
 
 cd ../better-permit-ui
-node test/client.smoke.mjs       # 71 checks: render + interaction smoke test
+node test/client.smoke.mjs       # 72 checks: render + interaction smoke test
 ```
 
 The tests use temporary directories as fixtures and run on both Windows and Linux (CI runs both).

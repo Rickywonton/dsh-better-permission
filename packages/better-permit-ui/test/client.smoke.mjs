@@ -417,8 +417,8 @@ globalThis.fetch = async (url) => {
           ? { requested: true, configured: false, model: '', minConfidence: 0.7 }
           : { requested: true, configured: true, model: 'deepseek-chat', minConfidence: 0.7 },
         explain: unconfigured
-          ? { sentence: '这一步只读取目录列表，不会改动文件。', local: '这一步会执行 dir。', source: 'local' }
-          : { sentence: '这一步会列出仓库状态，不会写入任何文件。', local: '这一步会执行 git status。', source: 'model' },
+          ? { sentence: '只是读取信息，不会改动或删除任何东西。', local: '只是读取信息，不会改动或删除任何东西。', source: 'local', level: 'safe' }
+          : { sentence: '这一步会列出仓库状态，不会写入任何文件。', local: '只是读取信息，不会改动或删除任何东西。', source: 'model', level: 'danger' },
       }),
     }
   }
@@ -439,7 +439,8 @@ check(
   true,
 )
 check('the approval detail carries the reviewer sentence', detailText.includes('这一步会列出仓库状态，不会写入任何文件。'), true)
-check('the reviewer sentence is labelled', detailText.includes('评审模型的解释'), true)
+check('the reviewer sentence is labelled', detailText.includes('评审模型判断'), true)
+check('the approval detail shows the danger level', detailText.includes('高风险'), true)
 
 function buttonsOf(node, found = []) {
   if (!node || typeof node !== 'object') return found
