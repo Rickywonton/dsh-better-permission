@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Permission Tiers",
-    "description": "Graded permission presets with a risk ceiling per tier: read, write, destructive, system and publish operations are graded and everything at or below the ceiling is approved automatically. The panel also shows the AI reviewer, the approval hold setting and the habit skill."
+    "description": "Graded permission presets with a risk ceiling per tier: read, write, destructive, system and publish operations are graded and everything at or below the ceiling is approved automatically. The panel also shows the AI reviewer, the approval explanation, the per-turn auto-approval reports, the approval hold setting and the habit skill."
   }
 }

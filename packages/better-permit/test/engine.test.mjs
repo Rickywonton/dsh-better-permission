@@ -26,6 +26,8 @@ import { createSessionRules } from '../lib/session-rules.js'
 import { createHabits } from '../lib/habits.js'
 import { createDeferrals, guidanceFor } from '../lib/hold.js'
 import { createAiGrader } from '../lib/ai.js'
+import { localExplanation } from '../lib/explain.js'
+import { renderReport, groupEntries } from '../lib/reports.js'
 import { apply } from '../index.js'
 
 const settings = {
@@ -343,6 +345,15 @@ console.log('commands and loopback API')
   const routes = []
   const listeners = new Map()
   const session = { header: { id: 'sess-1' }, tier: 'workspace-write-edits' }
+  const appended = []
+  session.append = (type, data, opts) => {
+    appended.push({ type, data, opts })
+    return { type, seq: appended.length, data, time: Date.now() }
+  }
+  session.ownEvents = () => [
+    { type: 'step/start', seq: 1, time: 0, data: { turn: 1, step: 1 } },
+    { type: 'step/start', seq: 2, time: 0, data: { turn: 1, step: 3 } },
+  ]
   const ctx = {
     logger: () => ({ info() {}, warn() {} }),
     on(event, listener) {
@@ -542,6 +553,76 @@ console.log('commands and loopback API')
   check('the habits endpoint answers', Array.isArray(habitsGet.body.habits), true)
   const defList = await call('GET', '/better-permit/approval/deferrals')
   check('the deferral endpoint answers', Array.isArray(defList.body.deferrals), true)
+
+  console.log('approval explanation and turn reports')
+  // A reviewer that is configured but unreachable still explains the call: the
+  // deterministic account is the fallback, never a silent dialog.
+  globalThis.fetch = async () => {
+    throw new Error('offline')
+  }
+  await listeners.get('tools/pre-execute')[0](
+    { callId: 'x1', name: 'pwsh', arguments: { command: 'Remove-Item C:/Windows/system32/drivers -Recurse', cwd: WS } },
+    async () => ({ kind: 'ask' }),
+  )
+  const explained = await call('GET', '/better-permit/approval/detail?sessionId=sess-1&callId=x1')
+  check('the detail carries an explanation', typeof explained.body.explain?.sentence, 'string')
+  check('an offline reviewer falls back to the local account', explained.body.explain.source, 'local')
+  check('the fallback names the command', explained.body.explain.sentence.includes('Remove-Item'), true)
+  check('the fallback names the risk', explained.body.explain.sentence.includes('系统层'), true)
+  delete globalThis.fetch
+
+  const plain = localExplanation({
+    tool: 'fs_write',
+    args: { path: 'notes.md', text: 'hi' },
+    risk: { key: 'write', label: '写入', hint: '会修改文件' },
+    rules: { label: '工作区内 · 写入自动' },
+  })
+  check('a non-shell call is still described', plain.includes('fs_write'), true)
+  check('a non-shell call lists its arguments', plain.includes('path=notes.md'), true)
+
+  const grouped = groupEntries([
+    { signature: 'pnpm install', risk: 'write', source: 'tier' },
+    { signature: 'pnpm install', risk: 'write', source: 'ai' },
+    { signature: 'dir', risk: 'read', source: 'rule' },
+  ])
+  check('the report groups repeated commands', grouped.rows.length, 2)
+  check('the report counts every call', grouped.count, 3)
+  check('the report notices the reviewer', grouped.ai, 1)
+  const reportText = renderReport(
+    [
+      { signature: 'dir', risk: 'read', source: 'tier' },
+      { signature: 'dir', risk: 'read', source: 'tier' },
+    ],
+    { risk: (key) => (key === 'read' ? '只读' : key) },
+  )
+  check('the report totals the turn', reportText.includes('本轮自动放行 2 次'), true)
+  check('the report names the command class', reportText.includes('dir ×2'), true)
+  check('the report never renders an empty turn', renderReport([], { risk: (key) => key }), '')
+
+  // A tier-approved read call is remembered, then reported when the turn closes.
+  await listeners.get('tools/pre-execute')[0](
+    { callId: 'r1', name: 'pwsh', arguments: { command: 'dir', cwd: WS }, agent: { session } },
+    async () => ({ kind: 'ask' }),
+  )
+  const autoAllowed = await listeners.get('approval/request')[0](
+    { toolName: 'pwsh', callId: 'r1', reason: 'escalate sandbox to workspace-write: look around', agent: { session } },
+    async () => 'unavailable',
+  )
+  check('a read command is auto-approved on the edit tier', autoAllowed, 'allowed-once')
+  const stop = listeners.get('agent/turn-stopping')?.[0]
+  check('the turn-stopping listener is registered', typeof stop, 'function')
+  await stop({ agent: { session }, turn: 1, signal: new AbortController().signal })
+  const report = appended.find((entry) => entry.type === 'developer/message')
+  check('the report is appended to the transcript', report !== undefined, true)
+  check('the report is a surface append', report.opts.surfaceOp, 'append')
+  check('the report lands on the turn it describes', report.data.turn, 1)
+  check('the report uses the turn final step', report.data.step, 3)
+  check('the report is a developer message', report.data.message.role, 'developer')
+  check('the report text totals the approvals', report.data.message.content[0].text.includes('本轮自动放行 2 次'), true)
+  check('the report lists every command class', report.data.message.content[0].text.includes('dir ×1'), true)
+  const reported = await call('GET', '/better-permit/approval/panel')
+  check('the panel keeps the finished report', reported.body.reports.length, 1)
+  check('the report records the turn number', reported.body.reports[0].turn, 1)
 }
 
 console.log('approval hold')

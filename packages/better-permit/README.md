@@ -1,3 +1,5 @@
+[中文](README.md) | [English](README.en.md)
+
 # Permission tiers（权限档位）
 
 在 DSH 原有的三档权限（`read-only` / `workspace-write` / `danger-full-access`）之上，新增分级档位：
@@ -110,6 +112,37 @@ skillDir: D:\dsh-home\skills   # 默认 <DSH_HOME>/skills
   DSH 的 skill 目录热加载，写完即生效（面板上有「生成 / 更新 skill」按钮）。
 - 生成的 SKILL.md 分「可以直接执行」「必须先问人」「判断原则」三段，来源是真实放行/拒绝记录。
 
+## 审批解释
+
+每次弹窗都带一段中文解释（`lib/explain.js`，端点 `GET /better-permit/approval/detail` 的 `explain`）：
+
+```json
+{ "sentence": "这一步会递归删除系统驱动目录，可能让设备无法启动。", "local": "…", "source": "model" }
+```
+
+- `source: "model"`：评审模型已配置，问它一句（≤60 字，只讲"在做什么 + 最坏后果"），6 秒上限。
+- `source: "local"`：模型没配 / 超时 / 报错 / 答空时，用命令、工作目录、风险等级、`RISK_HINTS`
+  与"档位为什么没放行它"拼出的确定性说明。
+- 解释按 `callId` 缓存（最多 32 条），弹窗反复取数不会重复问模型。
+
+## 每轮自动放行报告
+
+`lib/reports.js` + `agent/turn-stopping`（serial）：一轮收尾时，把这一轮本插件返回过 `allowed-once`
+的调用按「签名 + 风险」归类，写成一条 `developer/message`（`surfaceOp: "append"`）追加进对话：
+
+```
+本轮自动放行 3 次审批（未打扰你）：
+· dir ×2 — 风险「只读」，由档位上限放行
+· pnpm install ×1 — 风险「写入」，由本对话规则放行
+```
+
+- 放行人标注：档位上限 / 本对话规则 / 受信路径 / 评审模型。
+- 报告是 `developer` 消息：聊天里渲染成一条注入行，但 `dsh-llm` 会把 developer 消息从模型可见消息里
+  过滤掉（只用于工具声明增量），所以它不占模型上下文，只是一份给你看的账。
+- 空轮不写；写失败只记日志（`category: 'report-failed'`），不影响会话。
+- `GET /better-permit/approval/panel` 的 `reports` 返回最近 10 条（`{at, turn, count, text}`），
+  设置页面板有对应卡片。
+
 ## 安全边界（所有档位一致）
 
 - 只回答 `allowed-once`，从不改写审批策略、不安装常驻 hook、不阻止审批——没命中规则就 `next()` 交回原本的应答者。
@@ -200,6 +233,7 @@ tiers:
 | 评审模型 | `baseUrl` / `model` / key 来源、超时、置信度门槛、最近一次探针结果 | 「测试连接」（`POST /ai/test`） |
 | 审批等待 | `holdMs` 是否启用、超过多久算暂缓 | 改配置里的 `holdMs` |
 | 审批习惯 | 习惯库（签名、放行/拒绝次数、风险、最近一次）与 skill 文件路径 | 「生成 / 更新 skill」（`POST /habits/skill`） |
+| 每轮自动放行报告 | 最近 10 条 `agent/turn-stopping` 时写进对话的报告原文（含轮次与次数） | —（报告本身写在对话里） |
 | 所有对话通用 | 对所有对话生效的受信文件夹 | 添加（可点「浏览…」调原生选目录）、逐个移除 |
 | 单个对话 | 下拉选一个对话，查看它的受信文件夹 | 添加、逐个移除、清空该对话 |
 | 本对话放行规则 | 每个对话已记住的命令签名 | 逐条移除、整对话清空 |
@@ -233,7 +267,7 @@ skill 路径、受信清单与本对话放行规则，以及最近 8 条自动�
 ## 开发
 
 ```pwsh
-node test/engine.test.mjs    # 165 项离线断言：风险分级、档位上限、信任判定、放行规则、评审模型、习惯、暂缓、waterfall 集成、命令、回环 API、面板端点
+node test/engine.test.mjs    # 188 项离线断言：风险分级、档位上限、信任判定、放行规则、评审模型、习惯、暂缓、审批解释、每轮报告、waterfall 集成、命令、回环 API、面板端点
 ```
 
 浏览器半区在旁边的 `../better-permit-ui`（`better-permit-ui`）：那里有 `client.js`

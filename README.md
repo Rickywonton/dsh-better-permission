@@ -1,3 +1,5 @@
+[中文](README.md) | [English](README.en.md)
+
 # better-permit
 
 给 [DeepSeek Harness](https://github.com/deepseek-ai) 的权限系统做加法：把内置的三档权限
@@ -29,8 +31,12 @@
   之后的会话和评审模型都能先看它一眼。
 - **受信文件夹**：审批弹窗里一键「信任此文件夹并允许本次（仅本对话）」，也可 `/trust add <目录>`。
 - **本对话放行规则**：审批弹窗里一键「本对话总是允许这条命令」（类似 Trae），也可 `/allow add <命令>`。
+- **审批解释**：每次弹窗都会用中文说清"这一步在做什么、最坏会怎样"。配好评审模型时这句话由模型写，
+  否则用命令、风险等级和"档位为什么没放行它"拼出来（模型超时/报错/答空都自动回落到这句）。
+- **每轮自动放行报告**：一轮对话结束时，把这一轮替你做掉的审批汇总成一条报告追加进对话，
+  列出命令类别、次数、风险和放行人（档位上限 / 本对话规则 / 评审模型）；面板保留最近 10 条。
 - **可视面板**：设置页新增「权限与信任」一页，总览档位上限、风险图例、评审模型状态、审批等待设置、
-  习惯库、全局/单对话受信文件夹、各对话放行规则，以及最近自动放行记录。
+  习惯库、每轮报告、全局/单对话受信文件夹、各对话放行规则，以及最近自动放行记录。
 - **可审计**：每次自动放行都写进插件日志（`/tiers` 可看最近记录，也进 Host 日志）。
 
 ## 档位
@@ -99,6 +105,32 @@ holdAdvice: true   # 暂缓时顺带问一次模型：这操作是否可安全�
 skill 文件（默认 `D:\dsh-home\skills\better-permit-habits\SKILL.md`，可用 `skillDir` 改）。
 DSH 的 skill 目录是热加载的，写完即生效。
 
+## 审批解释
+
+每次弹窗里都有一段中文说明（`GET /better-permit/approval/detail` 的 `explain` 字段）：
+
+```json
+{ "sentence": "这一步会递归删除系统驱动目录，可能让设备无法启动。", "source": "model" }
+```
+
+- `source: "model"`：评审模型已配置，由它写一句（≤60 字，只讲"在做什么 + 最坏后果"）。
+- `source: "local"`：模型没配、超时（6 秒上限）、报错或答空时，用命令、工作目录、风险等级与
+  "档位为什么没放行它"拼出的确定性说明。
+- 解释按 `callId` 缓存，弹窗反复取数不会重复问模型。
+
+## 每轮自动放行报告
+
+一轮对话收尾时（`agent/turn-stopping`），插件把这一轮自动放行的审批汇总成一条报告追加进对话：
+
+```
+本轮自动放行 3 次审批（未打扰你）：
+· dir ×2 — 风险「只读」，由档位上限放行
+· pnpm install ×1 — 风险「写入」，由本对话规则放行
+```
+
+空轮不写；写失败只记日志，不影响会话。设置页「每轮自动放行报告」卡片保留最近 10 条，
+`GET /better-permit/approval/panel` 的 `reports` 字段也能拿到。
+
 ## 安装
 
 这个插件由两个包组成（为什么必须拆成两个，见
@@ -119,8 +151,9 @@ plugin_manager install_bundle  target: D:\path\to\better-permit\packages\better-
 
 也可以用 `/permission` 切换档位，或 `/tiers` 看当前档位的规则摘要。
 
-> 包名用 `dsh-` 前缀（不用个人 scope），是为了将来能直接发到 npm。名字本身不影响安装：
-> 只要 `package.json` 的 `name` 与 `cordis.patch.yml` 里那行 `name` 一致，装到哪个 profile 都能用。
+> 包名不带 scope（`better-permit` / `better-permit-ui`），是为了将来能直接发到 npm。
+> 名字本身不影响安装：只要 `package.json` 的 `name` 与 `cordis.patch.yml` 里那行 `name` 一致，
+> 装到哪个 profile 都能用。
 
 ## 使用
 
@@ -163,12 +196,14 @@ packages/better-permit/         Host 半区
   lib/ai.js                        评审模型客户端（OpenAI 兼容）
   lib/habits.js                    习惯库 + skill 导出
   lib/hold.js                      审批超时暂缓与提示文案
+  lib/explain.js                   审批弹窗的中文解释（模型一句 / 确定性段落）
+  lib/reports.js                   每轮自动放行报告的归组与渲染
   lib/trust.js                     受信路径与受信命令前缀
   lib/session-trust.js             按对话的受信文件夹存储
   lib/session-rules.js             按对话的命令放行规则存储
   lib/journal.js                   最近自动放行记录
   cordis.patch.yml                 档位表 + 插件挂载行
-  test/engine.test.mjs             165 项离线断言
+  test/engine.test.mjs             188 项离线断言
 packages/better-permit-ui/      浏览器半区
   client.js                        审批详情组件 + 设置页面板
   test/client.smoke.mjs            冒烟测试（自带 hooks 引擎，真渲染组件）
@@ -182,10 +217,10 @@ docs/RELEASES.md                   每个版本改了什么
 
 ```pwsh
 cd packages/better-permit
-node test/engine.test.mjs        # 165 checks
+node test/engine.test.mjs        # 188 checks
 
 cd ../better-permit-ui
-node test/client.smoke.mjs       # 渲染 + 交互冒烟
+node test/client.smoke.mjs       # 71 checks：渲染 + 交互冒烟
 ```
 
 测试用临时目录做夹具，Windows 与 Linux 都能跑（CI 里两边都跑一遍）。
@@ -206,10 +241,11 @@ node test/client.smoke.mjs       # 渲染 + 交互冒烟
 Permission tiers for DeepSeek Harness: eight presets instead of three, an instruction risk
 grader (read / write / destructive / system / outside / publish / unknown), per-conversation
 trusted folders and allow rules, an optional AI reviewer tier that consults your own
-OpenAI-compatible model, a "pause after N seconds" mode that tells the agent to move on instead
-of waiting forever, and a habit log that can be exported as a skill. The plugin only answers
-`approval/request` with `allowed-once` when a rule covers the operation, and falls back to the
-built-in answerer otherwise; removals, version exemptions and install scripts always ask, and
+OpenAI-compatible model, a plain-language explanation in every approval dialog, a per-turn report
+of everything that was auto-approved, a "pause after N seconds" mode that tells the agent to move
+on instead of waiting forever, and a habit log that can be exported as a skill. The plugin only
+answers `approval/request` with `allowed-once` when a rule covers the operation, and falls back to
+the built-in answerer otherwise; removals, version exemptions and install scripts always ask, and
 the reviewer can never widen the sandbox to full access. Install both packages with
 `plugin_manager install_bundle`, then refresh the Web UI.
 

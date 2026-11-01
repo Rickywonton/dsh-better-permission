@@ -224,6 +224,9 @@ const panelBody = {
     { signature: 'git push', tool: 'pwsh', risk: 'publish', allow: 1, block: 3, first: 1690000000000, last: 1700000005000, source: 'panel' },
   ],
   deferrals: [{ sessionId: 'c-one', tool: 'pwsh', reason: 'timeout', advice: 'split the command', waitedMs: 30000, at: 1700000000000 }],
+  reports: [
+    { at: 1700000009000, turn: 3, count: 4, text: '本轮自动放行 4 次审批（未打扰你）：\n· dir ×2 — 风险「只读」，由档位上限放行' },
+  ],
   skill: { path: '.dsh/skills/better-permit-approval/SKILL.md', exists: false },
   riskHints: {
     read: '只读取信息',
@@ -315,10 +318,13 @@ for (const key of [
   'aiTitle',
   'holdTitle',
   'habitsTitle',
+  'reportsTitle',
   'aiBadge',
 ]) {
   check(`the panel renders ${key}`, text.includes(key), true)
 }
+check('the reports card keeps a finished report', text.includes('本轮自动放行 4 次审批'), true)
+check('the reports card labels the turn', /#3/.test(text), true)
 check('the tier table lists the lowest tier', text.includes('工作区内 · 只读命令'), true)
 check('the tier table lists the guarded tier', text.includes('工作区内 · 高危才问'), true)
 check('the tier table spells out the risk ceiling', text.includes('ceiling'), true)
@@ -410,6 +416,9 @@ globalThis.fetch = async (url) => {
         ai: unconfigured
           ? { requested: true, configured: false, model: '', minConfidence: 0.7 }
           : { requested: true, configured: true, model: 'deepseek-chat', minConfidence: 0.7 },
+        explain: unconfigured
+          ? { sentence: '这一步只读取目录列表，不会改动文件。', local: '这一步会执行 dir。', source: 'local' }
+          : { sentence: '这一步会列出仓库状态，不会写入任何文件。', local: '这一步会执行 git status。', source: 'model' },
       }),
     }
   }
@@ -429,6 +438,8 @@ check(
   detailText.includes('本档位会先问评审模型 deepseek-chat（置信度 ≥ 0.7）再决定是否打扰你'),
   true,
 )
+check('the approval detail carries the reviewer sentence', detailText.includes('这一步会列出仓库状态，不会写入任何文件。'), true)
+check('the reviewer sentence is labelled', detailText.includes('评审模型的解释'), true)
 
 function buttonsOf(node, found = []) {
   if (!node || typeof node !== 'object') return found

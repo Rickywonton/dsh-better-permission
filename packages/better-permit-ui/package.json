@@ -1,6 +1,6 @@
 {
   "name": "better-permit-ui",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "MIT",
   "keywords": [
     "dsh",
@@ -24,7 +24,8 @@
     "cordis.patch.yml",
     "locale/",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "README.en.md"
   ],
   "dsh": {
     "bundle": {

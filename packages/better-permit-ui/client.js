@@ -111,6 +111,12 @@ window.__ModuleLoader__.load({
       skillDone: '已写入',
       aiBadge: 'AI 判定',
       aiDetailAsk: '本档位会先问评审模型 %s（置信度 ≥ %s）再决定是否打扰你',
+  explainAi: '评审模型的解释',
+  explainLocal: '这一步在做什么',
+  reportsTitle: '每轮自动放行报告',
+  reportsCount: '共 %s 次自动放行',
+  reportsHint: 'AI 判定档位下，每轮对话结束时会把这一轮自动放行的审批汇总成一条报告写进对话；这里保留最近几条。',
+  noReports: '这一轮还没有自动放行记录。',
       aiDetailDirect: '评审模型未配置：本档位会直接问你',
     }
 
@@ -205,6 +211,12 @@ window.__ModuleLoader__.load({
       skillDone: 'Written',
       aiBadge: 'AI verdict',
       aiDetailAsk: 'This tier asks the review model %s first (confidence ≥ %s) before deciding whether to bother you',
+  explainAi: 'Review model explanation',
+  explainLocal: 'What this step does',
+  reportsTitle: 'Per-turn auto-approval report',
+  reportsCount: '%s auto-approved',
+  reportsHint: 'On the AI tier, each turn ends by appending one report of the approvals it answered for you; the latest ones stay here.',
+  noReports: 'Nothing has been auto-approved in this turn yet.',
       aiDetailDirect: 'Review model not configured: this tier asks you directly',
     }
 
@@ -457,6 +469,10 @@ window.__ModuleLoader__.load({
       const riskLine = risk
         ? `${t('riskPrefix')}：${risk.label}${risk.hint ? ` · ${risk.hint}` : ''}`
         : ''
+      const explain = detail.explain && typeof detail.explain === 'object' ? detail.explain : null
+      const explainLine = explain && typeof explain.sentence === 'string' && explain.sentence.length > 0
+        ? `${explain.source === 'model' ? t('explainAi') : t('explainLocal')}：${explain.sentence}`
+        : ''
       const tierLine = detail.tier && !detail.covered && detail.tier.key
         ? `档位「${detail.tier.label}」${t('ceiling')}：${detail.tier.maxRiskLabel}${detail.tier.alwaysAsk.length ? ` · ${t('alwaysAskLabel')} ${detail.tier.alwaysAsk.join('、')}` : ''}`
         : detail.covered
@@ -479,6 +495,23 @@ window.__ModuleLoader__.load({
           : null,
         riskLine
           ? h('span', { style: { fontSize: '11px', lineHeight: '15px', color: riskColor(risk && risk.key) } }, riskLine)
+          : null,
+        explainLine
+          ? h(
+              'div',
+              {
+                style: {
+                  fontSize: '12px',
+                  lineHeight: '18px',
+                  padding: '7px 9px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--dsw-alias-border-l1)',
+                  background: 'var(--dsw-alias-bg-layer-1)',
+                  color: 'var(--dsw-alias-label-primary)',
+                },
+              },
+              explainLine,
+            )
           : null,
         tierLine
           ? h('span', { style: { fontSize: '11px', lineHeight: '15px', color: 'var(--dsw-alias-label-tertiary)' } }, tierLine)
@@ -682,6 +715,48 @@ window.__ModuleLoader__.load({
           },
           line,
         ),
+      )
+    }
+
+    // The reports this plugin appended to the transcript at the end of a turn.
+    function reportsCard(t, reports) {
+      const rows = Array.isArray(reports) ? reports : []
+      return h(
+        Section,
+        { title: t('reportsTitle'), hint: t('reportsHint') },
+        rows.length === 0
+          ? h('p', { style: emptyStyle }, t('noReports'))
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+              rows.map((report, index) =>
+                h(
+                  'div',
+                  {
+                    key: `report-${index}`,
+                    style: {
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
+                      padding: '7px 9px',
+                      borderRadius: '8px',
+                      border: '1px solid var(--dsw-alias-border-l1)',
+                      background: 'var(--dsw-alias-bg-layer-1)',
+                    },
+                  },
+                  h(
+                    'span',
+                    { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
+                    `${report.turn ? `#${report.turn} · ` : ''}${shortDate(report.at)} · ${format(t('reportsCount'), [report.count])}`,
+                  ),
+                  h(
+                    'span',
+                    { style: { fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-primary)', whiteSpace: 'pre-wrap' } },
+                    typeof report.text === 'string' ? report.text : '',
+                  ),
+                ),
+              ),
+            ),
       )
     }
 
@@ -984,6 +1059,7 @@ window.__ModuleLoader__.load({
         data ? aiCard(t, data.ai, probe, testAi) : null,
         data ? holdCard(t, data.hold) : null,
         data ? habitsCard(t, data.habits, data.skill, skillState, generateSkill) : null,
+        data ? reportsCard(t, data.reports) : null,
 
         riskRows.length === 0
           ? null

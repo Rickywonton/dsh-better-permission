@@ -76,8 +76,8 @@ off  <  read  <  write  <  destructive  =  system  <  publish  <  all
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/detail?sessionId=&callId=` | 待批调用的工具名、命令、工作目录、风险、签名、档位上限、评审模型、是否本应自动放行 |
-| GET | `/panel` | 面板数据：`base`、`global`、`conversations`、`configured`、`rules`、`tiers`、`riskHints`、`ai`、`hold`、`habits`、`deferrals`、`skill`、`recent` |
+| GET | `/detail?sessionId=&callId=` | 待批调用的工具名、命令、工作目录、风险、签名、档位上限、评审模型、是否本应自动放行，以及 `explain`（`{sentence, local, source}`） |
+| GET | `/panel` | 面板数据：`base`、`global`、`conversations`、`configured`、`rules`、`tiers`、`riskHints`、`ai`、`hold`、`habits`、`deferrals`、`reports`、`skill`、`recent` |
 | POST | `/panel/trust` | `{scope:'global'\|'session', sessionId?, folder}` |
 | POST | `/panel/untrust` | 同上，移除一条 |
 | POST | `/panel/clear` | `{scope, sessionId?}`，清空范围 |
@@ -93,6 +93,28 @@ off  <  read  <  write  <  destructive  =  system  <  publish  <  all
 | POST | `/habits/skill` | 把习惯写成 `<skillDir>/better-permit-habits/SKILL.md` |
 | GET | `/deferrals` | 待消费的暂缓通知 |
 | GET | `/candidates` | 待批复选目录（面板与按钮的候选来源） |
+
+## 审批解释
+
+`/detail` 的 `explain` 有两条来源：
+
+1. `source: "model"` —— 评审模型已配置，问它一句中文（≤60 字，只讲"在做什么 + 最坏后果"）。
+   6 秒上限，超时/报错/空回复都静默回落。
+2. `source: "local"` —— 用命令、工作目录、风险等级、`RISK_HINTS` 与"档位为什么没放行它"
+   拼出的确定性说明，不依赖任何外部服务。
+
+解释按 `callId` 缓存（最多 32 条），弹窗轮询不会重复问模型。
+
+## 每轮自动放行报告
+
+`agent/turn-stopping`（serial，每轮收尾）触发时，把这一轮本插件返回过 `allowed-once` 的调用
+按「签名 + 风险」归类，写成一条 `developer/message`（`surfaceOp: "append"`）追加进对话，
+同时把 `{at, turn, count, text}` 记进 `reports`（面板保留最近 10 条）。
+
+- 来源标注：`档位上限` / `本对话规则` / `受信路径` / `评审模型`。
+- 空轮不写；写失败只记日志（`category: 'report-failed'`），不影响会话。
+- 报告是 `developer` 消息：界面上会渲染成一条注入行，但 `dsh-llm` 会把 developer 消息从
+  模型可见的消息序列里过滤掉（只用于工具声明增量），所以它**不占模型上下文**，纯属给用户看的账。
 
 ## 裁决顺序
 

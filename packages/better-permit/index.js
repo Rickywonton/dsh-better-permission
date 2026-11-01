@@ -17,6 +17,7 @@
 import { resolve as toAbsolute, join } from 'node:path'
 import { statSync, mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 
 import { DEFAULT_TIERS, mergeTiers, gateText, orderedTiers } from './lib/tiers.js'
 import { decideApproval } from './lib/engine.js'
@@ -28,6 +29,8 @@ import { createSessionRules } from './lib/session-rules.js'
 import { createAiGrader } from './lib/ai.js'
 import { createHabits } from './lib/habits.js'
 import { createDeferrals, guidanceFor } from './lib/hold.js'
+import { createExplainer } from './lib/explain.js'
+import { createReports, renderReport } from './lib/reports.js'
 
 export const name = 'better-permit'
 export const inject = ['approval', 'permissionPresets', 'tools']
@@ -184,6 +187,8 @@ export function apply(ctx, config) {
   habits.bind()
   const grader = createAiGrader({ config: settings.ai, journal, habits })
   const deferrals = createDeferrals({ journal })
+  const explainer = createExplainer({ config: settings.ai, journal })
+  const reports = createReports({ journal })
 
   /** Where the generated habit skill lives: `<skills root>/better-permit-habits/SKILL.md`. */
   function skillRoot() {
@@ -378,6 +383,22 @@ export function apply(ctx, config) {
     return 'rejected'
   }
 
+  /** Remember one auto-answered approval so the turn can report it. */
+  function noteAuto(sessionId, decision, request, source) {
+    try {
+      reports.note(sessionId, {
+        tool: request?.toolName,
+        signature: decision?.risk?.signature ?? request?.toolName,
+        risk: decision?.risk?.key,
+        source,
+        tier: decision?.tier,
+        at: Date.now(),
+      })
+    } catch (error) {
+      journal.warn(`could not record an auto-approval: ${error?.message ?? error}`)
+    }
+  }
+
   ctx.on(
     'approval/request',
     async (request, next) => {
@@ -414,6 +435,7 @@ export function apply(ctx, config) {
             detail: `${review.reason || 'the reviewer allowed it'} · ${Math.round((review.confidence ?? 0) * 100)}% · ${review.ms ?? 0}ms`,
           })
           habits.observe({ signature: decision.risk?.signature, tool: request.toolName, risk: decision.risk?.key, decision: 'allow', source: 'ai' })
+          noteAuto(decision.sessionId, decision, request, 'ai')
           if (request?.callId) pending.delete(request.callId)
           return 'allowed-once'
         }
@@ -438,6 +460,8 @@ export function apply(ctx, config) {
           risk: risk?.key,
           detail: verdict.detail || (hasSnapshot ? 'recorded call' : messages.unreadable),
         })
+        habits.observe({ signature: risk?.signature, tool: request.toolName, risk: risk?.key, decision: 'allow', source: decision.allowRule ? 'rule' : 'tier' })
+        noteAuto(decision.sessionId, decision, request, decision.allowRule ? 'rule' : 'tier')
         if (request?.callId) pending.delete(request.callId)
         return 'allowed-once'
       }
@@ -449,6 +473,53 @@ export function apply(ctx, config) {
     },
     true,
   )
+
+  /**
+   * Close one turn with a report of everything this plugin approved silently.
+   * The text is appended as a developer message, so it shows up in the chat as
+   * an injected note and stays in the transcript as an audit line.
+   */
+  ctx.on('agent/turn-stopping', async (payload) => {
+    let entries = []
+    let sessionId
+    try {
+      const session = payload?.agent?.session
+      sessionId = sessionIdOf(session)
+      entries = reports.drain(sessionId)
+      if (entries.length === 0) return
+      const body = renderReport(entries, { risk: (key) => labelOf(key) })
+      if (!body) return
+      const turn = typeof payload?.turn === 'number' ? payload.turn : 0
+      const step = lastStepOf(session, turn)
+      const message = {
+        id: randomUUID(),
+        role: 'developer',
+        content: [{ type: 'text', text: body }],
+        source: { kind: 'better-permit-report' },
+      }
+      session.append('developer/message', { turn, step, message }, { surfaceOp: 'append' })
+      reports.remember(sessionId, { at: Date.now(), turn, count: entries.length, text: body })
+    } catch (error) {
+      if (entries.length > 0) {
+        // A transcript the host refuses to extend still deserves an audit line.
+        journal.record({ at: Date.now(), tier: 'report', category: 'report-failed', detail: `${entries.length} 次自动放行 · ${error?.message ?? error}` })
+      }
+    }
+  })
+
+  /** The step number the turn ended on, for the appended report event. */
+  function lastStepOf(session, turn) {
+    try {
+      const events = session?.ownEvents?.() ?? []
+      let step = 1
+      for (const event of events) {
+        if (event?.type === 'step/start' && event.data?.turn === turn) step = event.data.step
+      }
+      return step
+    } catch {
+      return 1
+    }
+  }
 
   /** The tier a session runs under, read from the preset it currently holds. */
   function tierForSessionId(sessionId) {
@@ -512,6 +583,36 @@ export function apply(ctx, config) {
         : undefined,
       rule: rule?.pattern ?? null,
       covered,
+    }
+  }
+
+  /** Explanations are asked once per call id and reused while the dialog is open. */
+  const explained = new Map()
+
+  /**
+   * Explain one pending call for the dialog: the reviewer model's sentence when
+   * it is configured, a deterministic account otherwise.
+   */
+  async function explainOf(detail, snapshot, callId) {
+    if (!snapshot || !callId) return undefined
+    const cached = explained.get(callId)
+    if (cached) return cached
+    try {
+      const answer = await explainer.explain({
+        tool: detail?.tool,
+        args: snapshot.args,
+        risk: detail?.risk
+          ? { key: detail.risk.key, label: detail.risk.label, hint: detail.risk.hint, reasons: detail.risk.reasons }
+          : undefined,
+        tier: detail?.tier?.key,
+        rules: detail?.tier,
+      })
+      explained.set(callId, answer)
+      while (explained.size > 32) explained.delete(explained.keys().next().value)
+      return answer
+    } catch (error) {
+      journal.warn(`could not explain a pending call: ${error?.message ?? error}`)
+      return undefined
     }
   }
 
@@ -766,6 +867,7 @@ export function apply(ctx, config) {
       hold: { ms: settings.holdMs, advice: settings.holdAdvice },
       habits: habits.list().slice(0, 20),
       deferrals: deferrals.list(),
+      reports: reports.list().slice(0, 10),
       skill: { path: skillFile(), exists: existsSync(skillFile()) },
       recent: journal.list().slice(0, 10),
     }
@@ -889,7 +991,9 @@ export function apply(ctx, config) {
       const args = snapshot?.args
       const command = typeof args?.command === 'string' ? args.command : typeof args?.cmd === 'string' ? args.cmd : undefined
       const cwd = typeof args?.cwd === 'string' ? args.cwd : typeof args?.workdir === 'string' ? args.workdir : undefined
-      return sendJson(res, 200, { ...detailOf(snapshot, command, cwd), folders: foldersOf(snapshot) })
+      const detail = detailOf(snapshot, command, cwd)
+      const explain = await explainOf(detail, snapshot, callId)
+      return sendJson(res, 200, { ...detail, explain, folders: foldersOf(snapshot) })
     }
     if (req.method === 'GET' && route === '/rules') {
       const sessionId = url.searchParams.get('sessionId') ?? ''

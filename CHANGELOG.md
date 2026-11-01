@@ -2,6 +2,19 @@
 
 版本号跟随 `packages/*/package.json`。每个版本的详细内容另见 [`docs/RELEASES.md`](docs/RELEASES.md)。
 
+## 0.6.0
+
+- 审批弹窗新增中文解释：`GET /better-permit/approval/detail` 返回 `explain`（`{ sentence, local, source }`），
+  配好评审模型时由模型写一句「这步在做什么、最坏什么后果」，否则用命令、风险等级与"档位为什么没放行它"
+  拼出的确定性说明；模型慢/挂/返回空都会静默回落到这句，弹窗永远不会因为解释而卡住。
+- 新增每轮自动放行报告：`agent/turn-stopping` 时把这一轮本插件替用户答应的审批汇总成一条
+  `developer/message`（`surfaceOp: 'append'`）写进对话，列出命令类别、次数、风险与放行人
+  （档位上限 / 本对话规则 / 评审模型）；设置页保留最近 10 条。
+- 面板新增「每轮自动放行报告」卡片；审批弹窗把解释渲染成独立一段（标签区分「评审模型的解释」与「这一步在做什么」）。
+- 新增 `lib/explain.js`、`lib/reports.js`；`/detail` 的解释按 callId 缓存，避免轮询重复问模型。
+- 文档：三份 README 全部加上 `[中文](README.md) | [English](README.en.md)` 语言切换行，并新增英文版。
+- 测试：主包 188 项、界面包 71 项。
+
 ## 0.5.0
 
 - 改名：`dsh-permission-tiers` → **`better-permit`**，浏览器半区 → `better-permit-ui`，
