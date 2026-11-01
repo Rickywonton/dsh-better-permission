@@ -81,6 +81,9 @@ plugin_manager install_bundle  target: D:\path\to\dsh-permission-tiers\packages\
 
 也可以用 `/permission` 切换档位，或 `/tiers` 看当前档位的规则摘要。
 
+> 包名用 `dsh-` 前缀（不用个人 scope），是为了将来能直接发到 npm。名字本身不影响安装：
+> 只要 `package.json` 的 `name` 与 `cordis.patch.yml` 里那行 `name` 一致，装到哪个 profile 都能用。
+
 ## 使用
 
 | 命令 | 作用 |
