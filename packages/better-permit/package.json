@@ -25,7 +25,8 @@
     "locale/",
     "icon.svg",
     "README.md",
-    "README.en.md"
+    "README.en.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {

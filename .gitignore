@@ -14,3 +14,7 @@ probe*.txt
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# release artifacts built by hand (npm pack + tar -a), attached to a GitHub
+# release instead of being committed
+dist/
