@@ -1,0 +1,16 @@
+node_modules/
+.pnpm-store/
+
+# scratch files from local debugging
+*.log
+.diag.log
+.probe.txt
+probe*.txt
+*.tmp
+
+# editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

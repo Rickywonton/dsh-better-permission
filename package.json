@@ -1,0 +1,16 @@
+{
+  "name": "dsh-permission-tiers-monorepo",
+  "version": "0.4.1",
+  "private": true,
+  "description": "Permission tiers for DeepSeek Harness: graded auto-approval, instruction risk grading, trusted folders and per-conversation allow rules.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "npm run test:host && npm run test:ui",
+    "test:host": "node packages/permission-tiers/test/engine.test.mjs",
+    "test:ui": "node packages/permission-tiers-ui/test/client.smoke.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

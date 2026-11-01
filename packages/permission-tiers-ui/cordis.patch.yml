@@ -1,0 +1,9 @@
+# Browser-only companion to dsh-permission-tiers.
+#
+# The Host half of permission-tiers renders no UI of its own, so the client
+# bundle needs a row of its own to be mounted (the client-module scan only
+# looks at packages that have a live Loader row). This row does nothing on the
+# Host; its only job is to be active.
+- insert:
+    - id: permission-tiers-ui
+      name: 'dsh-permission-tiers-ui'

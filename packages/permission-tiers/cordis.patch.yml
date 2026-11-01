@@ -1,0 +1,69 @@
+# Permission tiers — the same three permission presets plus graded ones that
+# auto-approve routine, verifiable operations (plugin listing/toggling/
+# installing, trusted paths and commands, ...) instead of asking every time.
+#
+# Row 1 restates the whole built-in `permission` row: a patch replaces the
+# targeted row's complete config, so every preset below must be declared here.
+# Order matters — permission-presets infers a preset from the active sandbox
+# mode + approval policy by taking the FIRST matching entry, so the
+# conservative `workspace-write` stays ahead of the wider tiers and the derived
+# default never silently becomes an auto-approving tier.
+#
+# Row 2 mounts the enforcement plugin itself.
+- id: permission
+  name: '@deepseek-ai/dsh-permission-presets'
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      workspace-write-safe:
+        sandbox: workspace-write
+        approval: ask
+        name: '工作区内 · 只读命令'
+        description: '只自动放行只读命令（列表、查看、查询）与插件列出；写入、删除、系统操作、外发仍会询问。'
+      workspace-write-plugins:
+        sandbox: workspace-write
+        approval: ask
+        name: '工作区内 · 插件免批准'
+        description: '工作区内自由修改；插件列出、启用/停用、安装自动放行，移除插件、版本豁免与安装脚本仍需确认。'
+      workspace-write-edits:
+        sandbox: workspace-write
+        approval: ask
+        name: '工作区内 · 写入自动'
+        description: '工作区内写入、装依赖、跑构建自动放行；删除/覆盖、系统操作、往外发仍会询问，完全访问提权仍需确认。'
+      workspace-write-trusted:
+        sandbox: workspace-write
+        approval: ask
+        name: '工作区内 · 受信放行'
+        description: '在“写入自动”之上，受信目录内的路径与受信前缀的命令自动提权；删除、系统操作与外发仍会询问。'
+      workspace-write-guarded:
+        sandbox: workspace-write
+        approval: ask
+        name: '工作区内 · 高危才问'
+        description: '读写、装依赖、删除都自动放行；只有系统层操作、对外发布和识别不出的命令才会询问。'
+      workspace-write-autopilot:
+        sandbox: workspace-write
+        approval: ask
+        name: '工作区内 · 自动放行'
+        description: '自动批准全部沙箱提权与其它审批请求；移除插件、版本豁免与安装脚本仍需确认。'
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
+- insert:
+    - id: permission-tiers
+      name: 'dsh-permission-tiers'
+      config:
+        inheritParentTier: true
+        # Trusted-command list for the 受信放行 tier: only a plain command that
+        # starts with one of these prefixes runs without asking.
+        trustedCommands:
+          - pnpm install
+          - pnpm add
+          - npm install
+          - npm i
+          - npm ci
