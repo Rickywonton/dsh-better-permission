@@ -6,6 +6,6 @@
  * Loader row is active, so this module exists to keep the row mounted — it has
  * no Host behaviour and no config.
  */
-export const name = 'permission-tiers-ui'
+export const name = 'better-permit-ui'
 
 export function apply() {}

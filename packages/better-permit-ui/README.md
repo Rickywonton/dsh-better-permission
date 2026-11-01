@@ -1,6 +1,6 @@
-# permission-tiers-ui
+# better-permit-ui
 
-`dsh-permission-tiers` 的浏览器半区（Host 行为全在那边）：
+`better-permit` 的浏览器半区（Host 行为全在那边）：
 
 - `client.js` — 两处界面：
   1. **审批弹窗详情**：命令文本、风险徽标（只读/写入/删除/系统层/对外发布…）、本档位为什么询问，
@@ -10,7 +10,7 @@
      本对话放行规则（逐条移除/清空）、各对话概览、配置里的信任清单、最近自动放行记录。
 - `index.js` — 空壳 Host 半区，只为让本包在 Loader 里有一行处于激活状态，浏览器 bundle 才会被扫描并加载。
 
-所有数据都通过主插件的 `/permission-tiers/approval/*` 端点读写；这里不保存任何状态。
+所有数据都通过主插件的 `/better-permit/approval/*` 端点读写；这里不保存任何状态。
 
 ## 为什么单独成包
 
@@ -22,7 +22,7 @@
 
 - `conversation.approval.detail`（single）：注册在 **priority -1**，遮蔽内置的命令预览组件
   （它占 priority 0，规则是「优先级最低的渲染」），因此这个组件自己画命令文本。
-- `settings.section`（list）：`id: 'permission-tiers'`，`order: 50`，出现在设置页导航里，标题「权限与信任」。
+- `settings.section`（list）：`id: 'better-permit'`，`order: 50`，出现在设置页导航里，标题「权限与信任」。
 
 ## 注意事项（踩过的坑）
 

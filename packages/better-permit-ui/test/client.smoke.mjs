@@ -161,7 +161,7 @@ function renderSync(component, props) {
   return tree
 }
 
-check('module id', descriptor.id, 'dsh-permission-tiers-ui')
+check('module id', descriptor.id, 'better-permit-ui')
 const plugin = descriptor.factory(requireStub)
 check('declared services', plugin.inject, ['slots', 'locale'])
 
@@ -193,8 +193,8 @@ plugin.apply(ctx)
 check('two slots are registered', slots.length, 2)
 check('the approval detail slot is taken over', slots[0].options.name, 'conversation.approval.detail')
 check('the settings section is registered', slots[1].options.name, 'settings.section')
-check('the section keeps its own id', slots[1].options.id, 'permission-tiers')
-check('the section carries its locale namespace', slots[1].options.locale, 'permission-tiers')
+check('the section keeps its own id', slots[1].options.id, 'better-permit')
+check('the section carries its locale namespace', slots[1].options.locale, 'better-permit')
 check('the section label resolves through the dictionary', slots[1].options.label(), 'nav')
 check('the panel dictionaries are registered once', effects.length, 1)
 
@@ -209,6 +209,22 @@ const panelBody = {
   conversations: [{ id: 'c-one', folders: ['D:\\ws\\proj'], at: 1 }],
   configured: { paths: [], commands: ['npm install'], packages: [] },
   recent: [],
+  ai: {
+    configured: true,
+    baseUrl: 'https://api.example.com/v1',
+    model: 'deepseek-chat',
+    keySource: 'env:DEEPSEEK_API_KEY',
+    timeoutMs: 8000,
+    minConfidence: 0.7,
+    lastCall: { at: 1700000000000, ms: 640, ok: true, reason: 'ok' },
+  },
+  hold: { ms: 30000, advice: true },
+  habits: [
+    { signature: 'npm install', tool: 'pwsh', risk: 'write', allow: 5, block: 1, first: 1690000000000, last: 1700000000000, source: 'panel' },
+    { signature: 'git push', tool: 'pwsh', risk: 'publish', allow: 1, block: 3, first: 1690000000000, last: 1700000005000, source: 'panel' },
+  ],
+  deferrals: [{ sessionId: 'c-one', tool: 'pwsh', reason: 'timeout', advice: 'split the command', waitedMs: 30000, at: 1700000000000 }],
+  skill: { path: '.dsh/skills/better-permit-approval/SKILL.md', exists: false },
   riskHints: {
     read: '只读取信息',
     write: '会改动文件',
@@ -228,6 +244,7 @@ const panelBody = {
       alwaysAsk: [],
       plugin: { read: true },
       escalate: { 'workspace-write': 'off', 'danger-full-access': 'off' },
+      ai: false,
       otherAsks: false,
     },
     {
@@ -239,6 +256,7 @@ const panelBody = {
       alwaysAsk: ['system', 'publish', 'unknown'],
       plugin: { read: true, install: 'trusted' },
       escalate: { 'workspace-write': 'all', 'danger-full-access': 'all' },
+      ai: true,
       otherAsks: true,
     },
   ],
@@ -247,11 +265,26 @@ const panelBody = {
 
 const fetchCalls = []
 globalThis.fetch = async (url, init) => {
-  fetchCalls.push({ url, init })
+  const target = String(url)
+  fetchCalls.push({ url: target, method: (init && init.method) || 'GET', init })
+  if (target.endsWith('/ai/test')) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, ms: 42, verdict: { verdict: 'allow', confidence: 0.82, reason: 'read only command' } }),
+    }
+  }
+  if (target.endsWith('/habits/skill')) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ path: '.dsh/skills/better-permit-approval/SKILL.md', bytes: 2048, exists: true }),
+    }
+  }
   return { ok: true, status: 200, json: async () => panelBody }
 }
 
-const panelTree = await render(slots[1].component, {
+const panelProps = {
   t: (key) => key,
   useSessions: (selector) => selector({
     ids: ['c-one'],
@@ -260,7 +293,9 @@ const panelTree = await render(slots[1].component, {
     projectionsBySession: {},
   }),
   pick: injected.pick,
-})
+}
+
+const panelTree = await render(slots[1].component, panelProps)
 
 check('the panel renders a tree', typeof panelTree, 'object')
 check('the panel renders a heading', panelTree.children[0].type, 'h2')
@@ -277,6 +312,10 @@ for (const key of [
   'rulesTitle',
   'configuredTitle',
   'recentTitle',
+  'aiTitle',
+  'holdTitle',
+  'habitsTitle',
+  'aiBadge',
 ]) {
   check(`the panel renders ${key}`, text.includes(key), true)
 }
@@ -288,6 +327,51 @@ check('the rules card lists a conversation rule', text.includes('git status'), t
 check('the rules card offers removal', text.includes('ruleRemove'), true)
 check('the panel shows the configured lists', text.includes('commandsLabel'), true)
 check('the global folder is listed', text.includes('D:\\ws\\shared'), true)
+
+// --- review model, approval wait, habits ---------------------------------
+
+check('the review card names the model', text.includes('deepseek-chat'), true)
+check('the review card names the key source', text.includes('DEEPSEEK_API_KEY'), true)
+check('the review card shows the timeout', text.includes('8000 ms'), true)
+check('the review card shows the confidence floor', text.includes('0.7'), true)
+check('the review card shows the last probe', text.includes('640 ms'), true)
+check('the wait card shows the configured limit', text.includes('holdLimited'), true)
+check('the habits card lists a signature', text.includes('git push'), true)
+check('the habits card counts both outcomes', /git push\s+1\s+3/.test(text), true)
+check('the habits card labels the risk', text.includes('对外发布'), true)
+check('the habits card dates the last sighting', /\d{4}-\d{2}-\d{2}/.test(text), true)
+check('the habits card names the skill file', text.includes('.dsh/skills/better-permit-approval/SKILL.md'), true)
+check('the habits card marks the skill missing', text.includes('skillMissing'), true)
+check('the guarded tier carries the AI badge', text.includes('aiBadge'), true)
+
+const panelButtons = buttonsOf(panelTree)
+const panelLabels = panelButtons.map((node) => textOf(node))
+check('the review card offers a connection test', panelLabels.some((label) => label.includes('aiTest')), true)
+check('the habits card offers a skill refresh', panelLabels.some((label) => label.includes('skillGenerate')), true)
+
+const testButton = panelButtons.find((node) => textOf(node).includes('aiTest'))
+await testButton.props.onClick()
+await new Promise((resolve) => setTimeout(resolve, 0))
+check(
+  'the connection test posts to the host',
+  fetchCalls.some((call) => call.method === 'POST' && call.url.endsWith('/ai/test')),
+  true,
+)
+const probeTree = await render(slots[1].component, panelProps)
+check('the connection test renders its result', textOf(probeTree).includes('aiTestOk'), true)
+check('the connection test renders its duration', textOf(probeTree).includes('42 ms'), true)
+
+const skillButton = buttonsOf(probeTree).find((node) => textOf(node).includes('skillGenerate'))
+await skillButton.props.onClick()
+await new Promise((resolve) => setTimeout(resolve, 0))
+check(
+  'the skill button posts to the host',
+  fetchCalls.some((call) => call.method === 'POST' && call.url.endsWith('/habits/skill')),
+  true,
+)
+const skillTree = await render(slots[1].component, panelProps)
+check('the skill button reports the written file', textOf(skillTree).includes('skillDone'), true)
+check('the skill button reloads the panel', fetchCalls.filter((call) => call.url.endsWith('/panel')).length > 1, true)
 
 // --- approval detail renders the grade and both shortcuts ---------------
 
@@ -307,7 +391,9 @@ const approvalProps = {
 }
 
 globalThis.fetch = async (url) => {
-  if (String(url).includes('/detail')) {
+  const target = String(url)
+  if (target.includes('/detail')) {
+    const unconfigured = target.includes('call-2')
     return {
       ok: true,
       status: 200,
@@ -321,6 +407,9 @@ globalThis.fetch = async (url) => {
         tier: { key: 'workspace-write-plugins', label: '工作区内 · 插件免批准', maxRisk: 'read', maxRiskLabel: '只读', alwaysAsk: [] },
         rule: null,
         covered: false,
+        ai: unconfigured
+          ? { requested: true, configured: false, model: '', minConfidence: 0.7 }
+          : { requested: true, configured: true, model: 'deepseek-chat', minConfidence: 0.7 },
       }),
     }
   }
@@ -335,6 +424,11 @@ check('the approval detail renders the risk label', detailText.includes('只读 
 check('the approval detail explains why the tier asked', detailText.includes('自动放行上限'), true)
 check('the approval detail offers a conversation rule', detailText.includes('本对话总是允许这条命令'), true)
 check('the approval detail keeps the folder shortcut', detailText.includes('信任此文件夹'), true)
+check(
+  'the approval detail explains the review model',
+  detailText.includes('本档位会先问评审模型 deepseek-chat（置信度 ≥ 0.7）再决定是否打扰你'),
+  true,
+)
 
 function buttonsOf(node, found = []) {
   if (!node || typeof node !== 'object') return found
@@ -355,6 +449,9 @@ check('the rule button allows this call once', answerCalls, ['allowed-once'])
 buttons[1].props.onClick({ preventDefault() {}, stopPropagation() {} })
 await new Promise((resolve) => setTimeout(resolve, 0))
 check('the folder button allows this call once', answerCalls, ['allowed-once', 'allowed-once'])
+
+const unconfiguredTree = await render(slots[0].component, Object.assign({}, approvalProps, { callId: 'call-2' }))
+check('the approval detail says the review model is missing', textOf(unconfiguredTree).includes('评审模型未配置：本档位会直接问你'), true)
 
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)

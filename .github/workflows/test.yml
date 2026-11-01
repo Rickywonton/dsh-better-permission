@@ -21,6 +21,6 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Host rules and approval engine
-        run: node packages/permission-tiers/test/engine.test.mjs
+        run: node packages/better-permit/test/engine.test.mjs
       - name: Browser bundle smoke test
-        run: node packages/permission-tiers-ui/test/client.smoke.mjs
+        run: node packages/better-permit-ui/test/client.smoke.mjs

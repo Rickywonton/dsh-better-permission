@@ -14,8 +14,9 @@
  *  - `approval/request` decides, using the record, the active tier and the
  *    trust lists. Not matching means `next()` — never a denial.
  */
-import { resolve as toAbsolute } from 'node:path'
-import { statSync } from 'node:fs'
+import { resolve as toAbsolute, join } from 'node:path'
+import { statSync, mkdirSync, writeFileSync, existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 
 import { DEFAULT_TIERS, mergeTiers, gateText, orderedTiers } from './lib/tiers.js'
 import { decideApproval } from './lib/engine.js'
@@ -24,9 +25,15 @@ import { classify, describeRisk, labelOf, rankOf, RISK_HINTS, withinCeiling } fr
 import { createJournal } from './lib/journal.js'
 import { createSessionTrust } from './lib/session-trust.js'
 import { createSessionRules } from './lib/session-rules.js'
+import { createAiGrader } from './lib/ai.js'
+import { createHabits } from './lib/habits.js'
+import { createDeferrals, guidanceFor } from './lib/hold.js'
 
-export const name = 'permission-tiers'
+export const name = 'better-permit'
 export const inject = ['approval', 'permissionPresets', 'tools']
+
+/** Marker the `Promise.race` in handOver resolves with when the wait expires. */
+const TIMEOUT = Symbol('approval hold timeout')
 
 const DEFAULTS = {
   defaultTier: 'workspace-write',
@@ -35,6 +42,48 @@ const DEFAULTS = {
   guardedActions: ['remove', 'exemption'],
   trustedCommands: ['pnpm install', 'pnpm add', 'npm install', 'npm i', 'npm ci'],
   journalSize: 40,
+  ai: {
+    baseUrl: '',
+    model: '',
+    apiKey: '',
+    apiKeyEnv: '',
+    timeoutMs: 8000,
+    minConfidence: 0.6,
+    maxTokens: 400,
+    maxHabits: 12,
+  },
+  holdMs: 0,
+  holdAdvice: true,
+}
+
+function text(value, fallback = '') {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : fallback
+}
+
+function number(value, fallback, min, max) {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(min, parsed))
+}
+
+function holdOf(input) {
+  if (Number.isFinite(input.holdMs)) return Math.max(0, input.holdMs)
+  if (Number.isFinite(input.holdSeconds)) return Math.max(0, input.holdSeconds * 1000)
+  return DEFAULTS.holdMs
+}
+
+function aiConfigOf(input) {
+  const ai = input && typeof input === 'object' ? input : {}
+  return {
+    baseUrl: text(ai.baseUrl, DEFAULTS.ai.baseUrl),
+    model: text(ai.model, DEFAULTS.ai.model),
+    apiKey: text(ai.apiKey, DEFAULTS.ai.apiKey),
+    apiKeyEnv: text(ai.apiKeyEnv, DEFAULTS.ai.apiKeyEnv),
+    timeoutMs: number(ai.timeoutMs, DEFAULTS.ai.timeoutMs, 500, 60000),
+    minConfidence: number(ai.minConfidence, DEFAULTS.ai.minConfidence, 0, 1),
+    maxTokens: number(ai.maxTokens, DEFAULTS.ai.maxTokens, 64, 4000),
+    maxHabits: number(ai.maxHabits, DEFAULTS.ai.maxHabits, 0, 60),
+  }
 }
 
 function listOf(value, fallback) {
@@ -59,6 +108,10 @@ function normalizeConfig(config) {
     command: input.command !== false,
     baseDir: typeof input.baseDir === 'string' && input.baseDir ? input.baseDir : undefined,
     tiers: input.tiers && typeof input.tiers === 'object' ? input.tiers : undefined,
+    ai: aiConfigOf(input.ai),
+    holdMs: holdOf(input),
+    holdAdvice: input.holdAdvice !== false,
+    skillDir: text(input.skillDir, ''),
   }
 }
 
@@ -127,6 +180,36 @@ export function apply(ctx, config) {
   sessionTrust.bind()
   const sessionRules = createSessionRules(ctx, { journal })
   sessionRules.bind()
+  const habits = createHabits(ctx, { journal })
+  habits.bind()
+  const grader = createAiGrader({ config: settings.ai, journal, habits })
+  const deferrals = createDeferrals({ journal })
+
+  /** Where the generated habit skill lives: `<skills root>/better-permit-habits/SKILL.md`. */
+  function skillRoot() {
+    if (settings.skillDir) return settings.skillDir
+    const env = process.env.DSH_HOME
+    if (typeof env === 'string' && env.length > 0) return join(env, 'skills')
+    try {
+      return join(homedir(), '.dsh-home', 'skills')
+    } catch {
+      return join(trust.base, 'skills')
+    }
+  }
+
+  function skillFile() {
+    return join(skillRoot(), 'better-permit-habits', 'SKILL.md')
+  }
+
+  /** Write the habit table out as a loadable skill; returns the path. */
+  function writeHabitSkill() {
+    const path = skillFile()
+    const body = habits.render()
+    mkdirSync(join(skillRoot(), 'better-permit-habits'), { recursive: true })
+    writeFileSync(path, body, 'utf8')
+    journal.record({ at: Date.now(), tier: 'manual', tool: 'habit skill', category: 'skill-write', detail: path })
+    return { path, bytes: Buffer.byteLength(body, 'utf8') }
+  }
 
   function sessionIdOf(session) {
     const id = session?.header?.id ?? session?.id
@@ -219,10 +302,81 @@ export function apply(ctx, config) {
       } catch (error) {
         journal.warn(`could not record a call snapshot: ${error?.message ?? error}`)
       }
+      // A paused approval is announced on the agent's very next call, so the
+      // model re-plans inside the same turn instead of retrying blindly.
+      try {
+        const notice = deferrals.take(sessionIdOf(exec.agent?.session))
+        if (notice) return { kind: 'deny', reason: guidanceFor(notice) }
+      } catch (error) {
+        journal.warn(`could not deliver a deferral notice: ${error?.message ?? error}`)
+      }
       return next()
     },
     true,
   )
+
+  /** Ask the reviewer model about one pending call. Never throws. */
+  async function reviewWith(decision, request) {
+    if (!grader.configured()) return { verdict: 'ask', reason: '评审模型未配置（缺 baseUrl / model / API key）', configured: false }
+    const rules = decision?.tier ? tiers[decision.tier] : undefined
+    try {
+      return await grader.review({
+        tool: request?.toolName,
+        args: decision?.snapshot?.args,
+        risk: decision?.risk,
+        tier: decision?.tier,
+        rules,
+      })
+    } catch (error) {
+      return { verdict: 'ask', reason: `评审模型出错：${error?.message ?? error}`, configured: true }
+    }
+  }
+
+  /**
+   * Hand the request to the normal approver — but stop waiting after `holdMs`.
+   * A timeout settles the request as "not now" and queues a deferral notice for
+   * the agent's next call; a dialog the user opens later still has the snapshot.
+   */
+  async function handOver(request, next, decision) {
+    const sessionId = decision?.sessionId ?? decision?.snapshot?.sessionId
+    const human = Promise.resolve().then(() => next())
+    human.catch(() => {})
+    if (!(settings.holdMs > 0)) {
+      try {
+        return await human
+      } finally {
+        if (request?.callId) pending.delete(request.callId)
+      }
+    }
+    const started = Date.now()
+    let timer
+    // Keep the timer referenced: a pending dialog is exactly what we are
+    // waiting on, and an unreferenced timer would let the host fall asleep.
+    const timeout = new Promise((done) => {
+      timer = setTimeout(() => done(TIMEOUT), settings.holdMs)
+    })
+    human.finally(() => {
+      if (request?.callId) pending.delete(request.callId)
+    })
+    const outcome = await Promise.race([human, timeout])
+    clearTimeout(timer)
+    if (outcome !== TIMEOUT) return outcome
+    let advice
+    if (settings.holdAdvice) {
+      const review = await reviewWith(decision, request)
+      if (review?.verdict === 'allow') advice = `评审模型认为这次操作可以安全执行：${review.reason ?? ''}`.trim()
+      else if (review?.reason) advice = review.reason
+    }
+    deferrals.defer(sessionId, {
+      tool: request?.toolName,
+      risk: decision?.risk?.key,
+      reason: decision?.verdict?.detail ?? 'the tier did not cover it',
+      advice,
+      waitedMs: Date.now() - started,
+      tier: decision?.tier,
+    })
+    return 'rejected'
+  }
 
   ctx.on(
     'approval/request',
@@ -238,13 +392,42 @@ export function apply(ctx, config) {
         if (rules) {
           const allowRule = sessionRules.match(sessionId, risk?.signature)
           const verdict = decideApproval({ request, snapshot, tier, rules, trust: trustFor(session), settings, risk, allowRule })
-          decision = { tier, verdict, hasSnapshot: snapshot !== undefined, risk, allowRule }
+          decision = { sessionId, tier, verdict, hasSnapshot: snapshot !== undefined, risk, allowRule, snapshot }
         } else if (risk?.signature) {
-          decision = { tier, risk }
+          decision = { sessionId, tier, risk, snapshot }
         }
       } catch (error) {
         journal.warn(`approval evaluation failed: ${error?.message ?? error}`)
       }
+
+      // The tier asked the reviewer model: its "allow" runs the call, anything
+      // else (including "no answer") falls through to the human.
+      if (decision?.verdict?.ai) {
+        const review = await reviewWith(decision, request)
+        if (review?.verdict === 'allow') {
+          journal.record({
+            at: Date.now(),
+            tier: decision.tier,
+            tool: request.toolName,
+            category: 'ai/allow',
+            risk: decision.risk?.key,
+            detail: `${review.reason || 'the reviewer allowed it'} · ${Math.round((review.confidence ?? 0) * 100)}% · ${review.ms ?? 0}ms`,
+          })
+          habits.observe({ signature: decision.risk?.signature, tool: request.toolName, risk: decision.risk?.key, decision: 'allow', source: 'ai' })
+          if (request?.callId) pending.delete(request.callId)
+          return 'allowed-once'
+        }
+        journal.record({
+          at: Date.now(),
+          tier: decision.tier,
+          tool: request.toolName,
+          category: 'ai/ask',
+          risk: decision.risk?.key,
+          detail: review?.reason || 'the reviewer declined to answer',
+        })
+        return handOver(request, next, decision)
+      }
+
       if (decision?.verdict?.allow) {
         const { tier, verdict, hasSnapshot, risk } = decision
         journal.record({
@@ -262,11 +445,7 @@ export function apply(ctx, config) {
       // snapshot stays available while the dialog is open, so the prompt can
       // offer to trust the target folder or to allow this command class for
       // the rest of the conversation.
-      try {
-        return await next()
-      } finally {
-        if (request?.callId) pending.delete(request.callId)
-      }
+      return handOver(request, next, decision)
     },
     true,
   )
@@ -297,6 +476,7 @@ export function apply(ctx, config) {
     const rules = tierKey ? tiers[tierKey] : undefined
     const rule = sessionRules.match(sessionId, risk?.signature)
     let covered = false
+    let aiAsked = false
     if (rules) {
       const verdict = decideApproval({
         request: { toolName: tool },
@@ -309,6 +489,7 @@ export function apply(ctx, config) {
         allowRule: rule,
       })
       covered = verdict.allow === true
+      aiAsked = verdict.ai === true
     }
     return {
       tool,
@@ -323,7 +504,11 @@ export function apply(ctx, config) {
             maxRisk: rules.maxRisk,
             maxRiskLabel: rules.maxRisk === 'off' ? '不自动放行' : labelOf(rules.maxRisk),
             alwaysAsk: rules.alwaysAsk.map((key) => labelOf(key)),
+            ai: rules.ai,
           }
+        : undefined,
+      ai: rules?.ai
+        ? { requested: aiAsked, configured: grader.configured(), model: settings.ai.model, minConfidence: settings.ai.minConfidence }
         : undefined,
       rule: rule?.pattern ?? null,
       covered,
@@ -349,7 +534,26 @@ export function apply(ctx, config) {
       lines.push(`命令风险上限：${ceiling}`)
       if (rules.alwaysAsk.length > 0) lines.push(`始终询问：${rules.alwaysAsk.map((key) => labelOf(key)).join('、')}`)
       lines.push(`其它审批：${rules.otherAsks ? '自动放行' : '询问'}`)
+      if (rules.ai) {
+        const status = grader.status()
+        lines.push(
+          status.configured
+            ? `评审模型：${status.model}（${status.baseUrl}，置信度门槛 ${status.minConfidence}）`
+            : '评审模型：未配置（把 baseUrl / model / apiKeyEnv 填进插件配置，“AI 判定”档位会退回人工审批）',
+        )
+      }
     }
+    lines.push(
+      settings.holdMs > 0
+        ? `审批等待上限：${Math.round(settings.holdMs / 1000)} 秒（超时后暂缓该操作，并在下一步告知模型）`
+        : '审批等待上限：不限制（一直等你回答）',
+    )
+    const habitRows = habits.list()
+    lines.push(
+      habitRows.length === 0
+        ? '审批习惯：（暂无记录）'
+        : `审批习惯：${habitRows.length} 条；习惯 skill 位于 ${skillFile()}${existsSync(skillFile()) ? '' : '（尚未生成，用 POST /better-permit/approval/habits/skill 生成）'}`,
+    )
     const own = sessionRules.list(sessionIdOf(agent?.session))
     lines.push(own.length === 0 ? '本对话放行规则：（暂无）' : `本对话放行规则：${own.map((entry) => entry.pattern).join(' · ')}`)
     lines.push(describeTrust(trust))
@@ -449,7 +653,7 @@ export function apply(ctx, config) {
     ctx.inject(['commands'], (scope) => {
       try {
         scope.commands.register({
-          definitionId: 'permission-tiers',
+          definitionId: 'better-permit',
           name: 'tiers',
           description: 'Show the permission-tier rules and the recent automatic approvals',
           handler: ({ agent }) => ({ kind: 'success', text: renderStatus(agent) }),
@@ -459,7 +663,7 @@ export function apply(ctx, config) {
       }
       try {
         scope.commands.register({
-          definitionId: 'permission-tiers-trust',
+          definitionId: 'better-permit-trust',
           name: 'trust',
           description: 'Trust a folder inside this conversation (add | remove | clear)',
           input: { hint: '[add|remove|clear] <folder>' },
@@ -470,7 +674,7 @@ export function apply(ctx, config) {
       }
       try {
         scope.commands.register({
-          definitionId: 'permission-tiers-allow',
+          definitionId: 'better-permit-allow',
           name: 'allow',
           description: 'Always allow a command class inside this conversation (add | remove | clear)',
           input: { hint: '<command prefix>' },
@@ -484,7 +688,7 @@ export function apply(ctx, config) {
 
   // Small loopback API behind the approval prompt: it reports which folder an
   // approval is about and records the user's per-conversation trust choice.
-  const API_PREFIX = '/permission-tiers/approval'
+  const API_PREFIX = '/better-permit/approval'
 
   function sendJson(res, status, body) {
     try {
@@ -554,9 +758,15 @@ export function apply(ctx, config) {
         plugin: entry.rules.plugin,
         escalate: entry.rules.escalate,
         otherAsks: entry.rules.otherAsks,
+        ai: entry.rules.ai,
       })),
       riskHints: RISK_HINTS,
       configured: { paths: trust.paths, commands: trust.commands, packages: trust.packages },
+      ai: { ...grader.status(), minConfidence: settings.ai.minConfidence },
+      hold: { ms: settings.holdMs, advice: settings.holdAdvice },
+      habits: habits.list().slice(0, 20),
+      deferrals: deferrals.list(),
+      skill: { path: skillFile(), exists: existsSync(skillFile()) },
       recent: journal.list().slice(0, 10),
     }
   }
@@ -646,6 +856,33 @@ export function apply(ctx, config) {
     const url = new URL(typeof req.url === 'string' ? req.url : '/', 'http://127.0.0.1')
     const route = url.pathname.slice(API_PREFIX.length) || '/'
     if (route === '/panel' || route.startsWith('/panel/')) return handlePanel(req, res, route)
+    if (req.method === 'GET' && route === '/ai') return sendJson(res, 200, { ...grader.status(), aiTiers: orderedTiers(tiers).filter((entry) => entry.rules.ai).map((entry) => entry.key) })
+    if (req.method === 'POST' && route === '/ai/test') {
+      if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request refused' })
+      const result = await grader.test()
+      journal.record({
+        at: Date.now(),
+        tier: 'manual',
+        tool: 'reviewer probe',
+        category: 'ai-test',
+        detail: result.ok ? `ok in ${result.ms ?? 0}ms` : String(result.error ?? 'failed'),
+      })
+      return sendJson(res, result.ok ? 200 : 502, result)
+    }
+    if (req.method === 'GET' && route === '/habits') {
+      const path = skillFile()
+      return sendJson(res, 200, { habits: habits.list(), skill: { path, exists: existsSync(path) } })
+    }
+    if (req.method === 'POST' && route === '/habits/skill') {
+      if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request refused' })
+      try {
+        const written = writeHabitSkill()
+        return sendJson(res, 200, { ...written, exists: true })
+      } catch (error) {
+        return sendJson(res, 500, { error: String(error?.message ?? error) })
+      }
+    }
+    if (req.method === 'GET' && route === '/deferrals') return sendJson(res, 200, { deferrals: deferrals.list() })
     if (req.method === 'GET' && route === '/detail') {
       const callId = url.searchParams.get('callId') ?? ''
       const snapshot = callId ? pending.get(callId) : undefined
@@ -727,7 +964,7 @@ export function apply(ctx, config) {
       // The route outlives a plain call, so hang its disposer on the fiber: a
       // reload then releases the path instead of tripping the duplicate check.
       if (typeof dispose === 'function' && typeof scope.effect === 'function') {
-        scope.effect(() => dispose, 'permission-tiers: approval API route')
+        scope.effect(() => dispose, 'better-permit: approval API route')
       }
     } catch (error) {
       journal.warn(`could not serve the trust API: ${error?.message ?? error}`)
@@ -746,15 +983,24 @@ export function apply(ctx, config) {
           /* fall back to the numeric order above */
         }
         prompt.context({
-          name: 'permission-tiers',
+          name: 'better-permit',
           order,
           text: [
             'Some approval requests may be auto-approved by the active permission tier without asking the user:',
             'plugin listing/toggling/installing, and on the wider tiers operations graded at or below the tier\'s risk',
             'ceiling (read / write / destructive), plus commands the user allowed for this conversation.',
+            'On the "AI 判定" tier an operation above that ceiling may instead be judged by the user\'s own reviewer model;',
+            'its approval runs the call, its doubt or refusal still reaches the user.',
             'An approval dialog that does appear means the tier refused that operation on purpose — report it to the',
             'user instead of retrying the same call with different arguments.',
-          ].join(' '),
+            settings.holdMs > 0
+              ? `If an approval stays unanswered for ${Math.round(settings.holdMs / 1000)} seconds the operation is paused: your next tool call is refused once with a notice saying so. When that happens do not retry the same call — continue with the steps that do not depend on it, or propose an alternative, and mention that the step is waiting for the user.`
+              : '',
+            existsSync(skillFile())
+              ? `Requests this machine has already settled are collected in the skill "better-permit-habits" (${skillFile()}); consult it before planning a risky step.`
+              : '',
+          ]            .filter((line) => line.length > 0)
+            .join(' '),
         })
       } catch (error) {
         journal.warn(`could not register the prompt context: ${error?.message ?? error}`)

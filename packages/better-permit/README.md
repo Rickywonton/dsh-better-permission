@@ -26,11 +26,10 @@
 | --- | --- | --- | --- |
 | `read-only` | 只读 | — | 全部 |
 | `workspace-write`（默认） | 工作区内 | — | 全部 |
-| `workspace-write-safe`<br>工作区内 · 只读命令 | 工作区内 | 只读 | 写入、删除、系统、外发 |
-| `workspace-write-plugins`<br>工作区内 · 插件免批准 | 工作区内 | 只读 + 插件列出/启停/安装 | 写入、删除、系统、外发；移除插件、版本豁免、安装脚本 |
 | `workspace-write-edits`<br>工作区内 · 写入自动 | 工作区内 | 写入 | 删除/覆盖、系统、外发；完全访问提权 |
 | `workspace-write-trusted`<br>工作区内 · 受信放行 | 工作区内 | 写入 + 受信目录/受信命令的提权 | 删除、系统、外发 |
-| `workspace-write-guarded`<br>工作区内 · 高危才问 | 工作区内 | 删除/覆盖 | 系统层、对外发布、无法识别 |
+| `workspace-write-ai`<br>工作区内 · AI 判定 | 工作区内 | 写入，以及上限之外交给你配置的评审模型判断 | 系统层、对外发布、无法识别；模型拿不准或不可用时同样询问 |
+| `workspace-write-guarded`<br>工作区内 · 高危才问 | 工作区内 | 删除/覆盖、工作区外 | 系统层、对外发布、无法识别 |
 | `workspace-write-autopilot`<br>工作区内 · 自动放行 | 工作区内 | 全部 | 移除插件、版本豁免、安装脚本 |
 | `danger-full-access` | 完全访问 | —（`approval: never`，不再询问） | — |
 
@@ -57,6 +56,60 @@
 规则只在本对话内生效，写入 `kv` 存储（重启后仍在）。它**不能**越过档位的「始终询问」清单：
 `system` / `publish` / `unknown` 这类在受信档位里仍然会问的操作，规则也不会自动放行。
 
+需要模型参与判定时，档位规则里写 `ai: true`：命中上限之内照旧自动放行，上限之外先问评审模型，
+模型说 `allow` 才放行，其余一律交回人工。`danger-full-access` 的提权永远不由模型决定。
+
+## AI 判定模式
+
+`workspace-write-ai` 档把「上限之外、但还不到必须问人」的那段交给一个你自己提供的模型：
+
+```yaml
+ai:
+  baseUrl: https://api.example.com/v1   # OpenAI 兼容，插件自己拼 /chat/completions
+  model: your-model
+  apiKeyEnv: BETTER_PERMIT_API_KEY      # 或直接写 apiKey（不进日志）
+  timeoutMs: 8000
+  minConfidence: 0.6                    # 低于这个置信度就当"拿不准"
+  maxTokens: 400
+  maxHabits: 12                         # 每次最多带几条习惯给模型参考
+```
+
+行为约束：
+
+- 只接受 JSON `{"verdict":"allow"|"ask","confidence":0..1,"reason":"…"}`；解析不出、超时、
+  非 2xx、抛错、置信度不够，全部按 `ask` 处理（fail-closed），也就是回到问你。
+- 只影响"要不要打扰你"：`danger-full-access` 提权仍然是确定性闸门，模型最多让 `workspace-write` 提权生效。
+- 没配置 `baseUrl` / `model` / key 时，这个档位退化成"上限之外都问你"。
+
+`GET /better-permit/approval/ai` 返回 `{configured, baseUrl, model, keySource, timeoutMs, minConfidence, lastCall}`；
+`POST /better-permit/approval/ai/test` 发一次探针（成功 200 带 verdict，失败 502）。面板上有「测试连接」按钮。
+
+## 审批超时暂缓
+
+```yaml
+holdMs: 30000      # 0 = 不限时（默认）；>0 时弹窗超过这么久没被回答就判为"暂缓"
+holdAdvice: true   # 暂缓时顺带问一次评审模型：这操作能不能安全执行 / 该怎么绕
+```
+
+暂缓时：这次调用以 `rejected` 结束（不会执行），并且给这个对话排一条**一次性通知**——
+模型的下一次工具调用会被拒一次，理由里说明"这一步在等你、不要用同样参数重试、先做不依赖它的步骤"。
+通知只发一次，之后模型按正常规则继续。
+
+## 习惯与 skill
+
+每次放行/拒绝都会记进习惯库（`kv` unit `better-permit-habits`，最多 300 条，按最近使用淘汰）：
+
+```yaml
+maxHabits: 12        # 每次给评审模型看几条
+maxHabitsInSkill: 40 # 导出 skill 时写几条
+skillDir: D:\dsh-home\skills   # 默认 <DSH_HOME>/skills
+```
+
+- `GET /better-permit/approval/habits` 看习惯库。
+- `POST /better-permit/approval/habits/skill` 把习惯写成 `<skillDir>/better-permit-habits/SKILL.md`，
+  DSH 的 skill 目录热加载，写完即生效（面板上有「生成 / 更新 skill」按钮）。
+- 生成的 SKILL.md 分「可以直接执行」「必须先问人」「判断原则」三段，来源是真实放行/拒绝记录。
+
 ## 安全边界（所有档位一致）
 
 - 只回答 `allowed-once`，从不改写审批策略、不安装常驻 hook、不阻止审批——没命中规则就 `next()` 交回原本的应答者。
@@ -70,7 +123,7 @@
 
 ## 配置
 
-`cordis.patch.yml` 里 `permission-tiers` 行的 `config`（任意字段可省略）：
+`cordis.patch.yml` 里 `better-permit` 行的 `config`（任意字段可省略）：
 
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
@@ -84,6 +137,10 @@
 | `trustedPackages` | `[]` | 受信包名或 scope（`@scope/*`），供自定义档位的 `install: trusted` 使用 |
 | `shellTools` | `['pwsh','bash','shell','sh']` | 执行命令的工具名 |
 | `journalSize` | `40` | 自动放行记录条数 |
+| `holdMs` | `0` | 审批超过这么久（毫秒）没被回答就暂缓该操作；`0` = 不限时 |
+| `holdAdvice` | `true` | 暂缓时问一次评审模型，给出替代建议 |
+| `ai` | 见下方 | 评审模型配置（`baseUrl` / `model` / `apiKey` / `apiKeyEnv` / `timeoutMs` / `minConfidence` / `maxTokens` / `maxHabits` / `maxHabitsInSkill`） |
+| `skillDir` | `<DSH_HOME>/skills` | 习惯 skill 的根目录 |
 | `promptContext` | `true` | 注入一段提示，告知模型存在自动放行 |
 | `tiers` | — | 覆盖/新增档位规则 |
 
@@ -97,6 +154,7 @@ tiers:
     plugin: { read: true, toggle: true, install: trusted, remove: false, exemption: false }
     maxRisk: write          # off | read | write | destructive | publish | all
     alwaysAsk: [system, publish, unknown]
+    ai: true                # 上限之外先问评审模型
     escalate:
       workspace-write: all
       danger-full-access: trusted
@@ -133,12 +191,15 @@ tiers:
 
 ## 设置页面板：权限与信任
 
-**设置 → 权限与信任**（`settings.section`，id `permission-tiers`）是一页可视化管理界面：
+**设置 → 权限与信任**（`settings.section`，id `better-permit`）是一页可视化管理界面：
 
 | 区域 | 内容 | 可做的操作 |
 | --- | --- | --- |
-| 档位与自动放行范围 | 每个档位的沙箱、自动放行上限、插件/提权维度、始终询问清单 | —（切档位用输入框选择器） |
+| 档位与自动放行范围 | 每个档位的沙箱、自动放行上限、插件/提权维度、始终询问清单；用模型判定的档位带「AI 判定」徽标 | —（切档位用输入框选择器） |
 | 风险分级 | 七级风险的说明与配色 | — |
+| 评审模型 | `baseUrl` / `model` / key 来源、超时、置信度门槛、最近一次探针结果 | 「测试连接」（`POST /ai/test`） |
+| 审批等待 | `holdMs` 是否启用、超过多久算暂缓 | 改配置里的 `holdMs` |
+| 审批习惯 | 习惯库（签名、放行/拒绝次数、风险、最近一次）与 skill 文件路径 | 「生成 / 更新 skill」（`POST /habits/skill`） |
 | 所有对话通用 | 对所有对话生效的受信文件夹 | 添加（可点「浏览…」调原生选目录）、逐个移除 |
 | 单个对话 | 下拉选一个对话，查看它的受信文件夹 | 添加、逐个移除、清空该对话 |
 | 本对话放行规则 | 每个对话已记住的命令签名 | 逐条移除、整对话清空 |
@@ -149,21 +210,21 @@ tiers:
 安全约定：
 
 - 「所有对话通用」的条目会加宽**每个**对话的提权判定，属于全局放宽，界面上单独分区并标注。
-- 面板写入走 Host 的 `/permission-tiers/approval/panel*` 端点：仅回环地址、同源校验、
+- 面板写入走 Host 的 `/better-permit/approval/panel*` 端点：仅回环地址、同源校验、
   目录必须真实存在（`statSync().isDirectory()`），路径一律先 `resolve` 成绝对路径。
 - 面板只改「哪些目录/命令算受信」，不改档位本身；档位仍然只能通过输入框选择器 / `/permission` 切换。
 
 ## 查看当前状态
 
-`/tiers` 打印当前档位、风险上限、始终询问清单、各维度规则、受信清单与本对话放行规则，以及最近 8 条自动放行记录；
-每次自动放行也会写入插件日志。
+`/tiers` 打印当前档位、风险上限、始终询问清单、各维度规则、评审模型、审批等待上限、习惯条数与
+skill 路径、受信清单与本对话放行规则，以及最近 8 条自动放行记录；每次自动放行也会写入插件日志。
 
 ## 包结构
 
 | 包 | 内容 |
 | --- | --- |
-| `dsh-permission-tiers`（本目录） | Host 半区：档位表 patch、风险分级器、裁决引擎、受信清单与放行规则、`/tiers` `/trust` `/allow`、`/permission-tiers/approval/*` 端点 |
-| `dsh-permission-tiers-ui`（`../permission-tiers-ui`） | 浏览器半区：审批弹窗里的风险徽标与两个快捷按钮、设置页「权限与信任」页面 |
+| `better-permit`（本目录） | Host 半区：档位表 patch、风险分级器、裁决引擎、评审模型、习惯库、暂缓队列、受信清单与放行规则、`/tiers` `/trust` `/allow`、`/better-permit/approval/*` 端点 |
+| `better-permit-ui`（`../better-permit-ui`） | 浏览器半区：审批弹窗里的风险徽标与两个快捷按钮、设置页「权限与信任」页面 |
 
 拆成两个包不是设计偏好：`dsh-client-modules` 会把「这个包有没有 `dsh.client`」的扫描结果按
 「行名 + baseUrl」永久缓存（连 `null` 也缓存，没有失效路径），所以一个包在装上之后才加的
@@ -172,10 +233,10 @@ tiers:
 ## 开发
 
 ```pwsh
-node test/engine.test.mjs    # 118 项离线断言：风险分级、档位上限、信任判定、放行规则、waterfall 集成、命令、回环 API、面板端点
+node test/engine.test.mjs    # 165 项离线断言：风险分级、档位上限、信任判定、放行规则、评审模型、习惯、暂缓、waterfall 集成、命令、回环 API、面板端点
 ```
 
-浏览器半区在旁边的 `../permission-tiers-ui`（`dsh-permission-tiers-ui`）：那里有 `client.js`
+浏览器半区在旁边的 `../better-permit-ui`（`better-permit-ui`）：那里有 `client.js`
 与它自己的冒烟测试（`node test/client.smoke.mjs`）。两个包都改完后各重载一次
 （`plugin_manager set_bundle` 关→开），再刷新页面（客户端 bundle 不会自动热更）。
 

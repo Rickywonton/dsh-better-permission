@@ -5,7 +5,10 @@
  * request may be answered `allowed-once` automatically.
  *
  * `allow: false` never means "deny" — it means "not ours, pass it down the
- * waterfall so the normal approver (the UI) handles it".
+ * waterfall so the normal approver (the UI) handles it". The one exception is
+ * `ai: true`, which asks the caller to consult the reviewer model first: the
+ * model's `allow` becomes `allowed-once`, its doubt or refusal still reaches
+ * the user.
  */
 import { categoryOf, parseEscalation } from './tiers.js'
 import { checkInstallTarget, checkTrust } from './trust.js'
@@ -17,6 +20,11 @@ function allow(category, detail) {
 
 function pass(category, reason) {
   return { allow: false, category, detail: reason }
+}
+
+/** Hand the call to the reviewer model instead of the user. */
+function review(category, reason) {
+  return { allow: false, ai: true, category, detail: reason }
 }
 
 function hasBuildScripts(args) {
@@ -64,11 +72,16 @@ export function decideApproval({ request, snapshot, tier, rules, trust, settings
     return pass(`risk/${riskKey}`, `the operation looks ${risk?.label ?? riskKey}, which this tier always asks about`)
   }
 
+  // Sandbox escalations are only partly deterministic: the widest one
+  // (`danger-full-access`) always needs its gate, while a `workspace-write`
+  // widening may be handed to the reviewer when the tier asks for it — the
+  // model can clear a delete inside the workspace, never full access.
   const mode = parseEscalation(request?.reason)
   if (mode) {
     const gate = rules.escalate[mode]
     if (gate === 'all') {
       if (withinCeiling(rules.maxRisk, riskKey)) return allow(`escalate/${mode}`, shorten(request.reason))
+      if (mode === 'workspace-write' && rules.ai) return review(`ai/${riskKey}`, `above this tier's automatic ceiling (${rules.maxRisk}): ${risk?.label ?? riskKey}`)
       return pass(`escalate/${mode}`, `above this tier's automatic ceiling (${rules.maxRisk}): ${risk?.label ?? riskKey}`)
     }
     if (gate === 'trusted') {
@@ -84,9 +97,12 @@ export function decideApproval({ request, snapshot, tier, rules, trust, settings
   }
 
   if (!withinCeiling(rules.maxRisk, riskKey)) {
-    return pass(`risk/${riskKey}`, `above this tier's automatic ceiling (${rules.maxRisk}): ${risk?.label ?? riskKey}`)
+    const reason = `above this tier's automatic ceiling (${rules.maxRisk}): ${risk?.label ?? riskKey}`
+    if (rules.ai) return review(`ai/${riskKey}`, reason)
+    return pass(`risk/${riskKey}`, reason)
   }
   if (rules.otherAsks) return allow('ask/other', `${tool} ${shorten(request?.reason) || ''}`.trim())
+  if (rules.ai) return allow(`ai/${riskKey}`, `${tool} ${risk?.label ?? riskKey} 在上限内`)
   return pass('ask/other', 'not covered by this tier')
 }
 

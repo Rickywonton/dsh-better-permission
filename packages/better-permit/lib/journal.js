@@ -8,7 +8,7 @@ export function createJournal(ctx, limit = 40) {
 
   function write(level, message) {
     try {
-      const logger = typeof ctx.logger === 'function' ? ctx.logger('permission-tiers') : ctx.logger
+      const logger = typeof ctx.logger === 'function' ? ctx.logger('better-permit') : ctx.logger
       if (logger && typeof logger[level] === 'function') logger[level](message)
     } catch {
       /* logging must never break an approval */

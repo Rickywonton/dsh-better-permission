@@ -1,6 +1,0 @@
-{
-  "meta": {
-    "title": "Permission Tiers",
-    "description": "Graded permission presets with a risk ceiling per tier: read, write, destructive, system and publish operations are graded, everything at or below the ceiling is approved automatically. Adds trusted folders and per-conversation command rules."
-  }
-}

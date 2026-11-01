@@ -6,12 +6,12 @@
  */
 import assert from 'node:assert/strict'
 import { join, resolve } from 'node:path'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 // Fixtures live in a temp folder, so the suite runs on any platform and leaves
 // nothing behind — a few checks really stat a folder.
-const sandboxRoot = mkdtempSync(join(tmpdir(), 'permission-tiers-test-'))
+const sandboxRoot = mkdtempSync(join(tmpdir(), 'better-permit-test-'))
 const WS = join(sandboxRoot, 'ws')
 const TRUSTED = join(sandboxRoot, 'trusted')
 const TRUSTED_EVIL = join(sandboxRoot, 'trusted-evil')
@@ -23,6 +23,9 @@ import { decideApproval } from '../lib/engine.js'
 import { normalizeTrust, targetFolders, checkTrust } from '../lib/trust.js'
 import { classify } from '../lib/risk.js'
 import { createSessionRules } from '../lib/session-rules.js'
+import { createHabits } from '../lib/habits.js'
+import { createDeferrals, guidanceFor } from '../lib/hold.js'
+import { createAiGrader } from '../lib/ai.js'
 import { apply } from '../index.js'
 
 const settings = {
@@ -54,7 +57,7 @@ function check(label, actual, expected) {
   }
 }
 
-function decide(snapshot, reason, tier = 'workspace-write-plugins', rules = tiers[tier], extra = {}) {
+function decide(snapshot, reason, tier = 'workspace-write-edits', rules = tiers[tier], extra = {}) {
   const risk = snapshot ? classify({ tool: snapshot.tool, args: snapshot.args }, { base: WS, shellTools: new Set(settings.shellTools) }) : undefined
   return decideApproval({
     request: { toolName: snapshot?.tool ?? 'plugin_manager', reason },
@@ -125,7 +128,7 @@ check('trusted package allowed', decide(pluginCall({ action: 'install_bundle', t
 check('other package asks', decide(pluginCall({ action: 'install_bundle', target: 'evil@1.0.0' }), undefined, ti).allow, false)
 
 console.log('apply() waterfall')
-function fakeContext({ tier = 'workspace-write-plugins', parents = new Map() } = {}) {
+function fakeContext({ tier = 'workspace-write-edits', parents = new Map() } = {}) {
   const listeners = new Map()
   const session = { header: { id: 'child', parentSession: parents.size ? 'parent' : undefined }, tier }
   const ctx = {
@@ -162,7 +165,7 @@ async function runFlow({ tier, parents, exec, request }) {
 }
 
 const listOutcome = await runFlow({
-  tier: 'workspace-write-plugins',
+  tier: 'workspace-write-edits',
   exec: { callId: 'c1', name: 'plugin_manager', arguments: { action: 'list_plugins' } },
   request: { toolName: 'plugin_manager', callId: 'c1' },
 })
@@ -170,14 +173,14 @@ check('pre-execute never decides', listOutcome.decision.kind, 'ask')
 check('list auto-approved through waterfall', listOutcome.outcome, 'allowed-once')
 
 const removeOutcome = await runFlow({
-  tier: 'workspace-write-plugins',
+  tier: 'workspace-write-edits',
   exec: { callId: 'c2', name: 'plugin_manager', arguments: { action: 'remove_bundle', target: 'x' } },
   request: { toolName: 'plugin_manager', callId: 'c2' },
 })
 check('remove falls through to the approver', removeOutcome.outcome, 'unavailable')
 
 const noSnapshot = await runFlow({
-  tier: 'workspace-write-plugins',
+  tier: 'workspace-write-edits',
   exec: { callId: 'c3', name: 'plugin_manager', arguments: { action: 'list_plugins' } },
   request: { toolName: 'plugin_manager', callId: 'different' },
 })
@@ -239,7 +242,9 @@ check('the risk label is localised', grade('pwsh', { command: 'rm -rf build' }).
 console.log('risk ceilings')
 const edits = 'workspace-write-edits'
 const guarded = 'workspace-write-guarded'
-check('the safe tier never escalates', decide({ tool: 'pwsh', args: { command: 'dir' } }, 'escalate sandbox to workspace-write: x', 'workspace-write-safe').allow, false)
+check('the ai tier asks before widening to full access', decide({ tool: 'pwsh', args: { command: 'dir' } }, 'escalate sandbox to danger-full-access: x', 'workspace-write-ai').allow, false)
+check('the removed tiers are gone', tiers['workspace-write-safe'], undefined)
+check('the removed plugin tier is gone', tiers['workspace-write-plugins'], undefined)
 check('the edits tier allows a write escalation', decide({ tool: 'pwsh', args: { command: 'pnpm install' } }, 'escalate sandbox to workspace-write: install', edits).allow, true)
 check('the edits tier asks about a delete', decide({ tool: 'pwsh', args: { command: 'rm -rf build' } }, 'escalate sandbox to workspace-write: clean', edits).allow, false)
 check('the guarded tier allows a delete', decide({ tool: 'pwsh', args: { command: 'rm -rf build' } }, 'escalate sandbox to danger-full-access: clean', guarded).allow, true)
@@ -266,12 +271,78 @@ store.add('s1', 'dir')
 store.clear('s1')
 check('clearing empties the conversation', store.list('s1').length, 0)
 
+console.log('reviewer tier')
+const aiTier = 'workspace-write-ai'
+check('routine writes never reach the model', decide({ tool: 'pwsh', args: { command: 'pnpm install' } }, 'escalate sandbox to workspace-write: install', aiTier).allow, true)
+const reviewed = decide({ tool: 'pwsh', args: { command: 'Remove-Item build -Recurse' } }, 'escalate sandbox to workspace-write: clean', aiTier)
+check('a delete is handed to the model', reviewed.allow, false)
+check('the hand-off is flagged for the caller', reviewed.ai, true)
+check('the registry is never handed to the model', decide({ tool: 'pwsh', args: { command: 'reg add HKLM\\Software\\X /v y' } }, 'escalate sandbox to danger-full-access: x', aiTier).ai, undefined)
+check('a push is never handed to the model', decide({ tool: 'pwsh', args: { command: 'git push' } }, 'escalate sandbox to danger-full-access: x', aiTier).allow, false)
+check('the model never widens to full access', decide({ tool: 'pwsh', args: { command: 'dir' } }, 'escalate sandbox to danger-full-access: x', aiTier).allow, false)
+
+console.log('habits')
+const habits = createHabits({ get: () => undefined }, {})
+habits.observe({ signature: 'git status', tool: 'pwsh', risk: 'read', decision: 'allow', source: 'ai' })
+habits.observe({ signature: 'git status', tool: 'pwsh', risk: 'read', decision: 'allow', source: 'ai' })
+habits.observe({ signature: 'rm -rf build', tool: 'pwsh', risk: 'destructive', decision: 'block', source: 'user' })
+check('a habit accumulates', habits.list().find((entry) => entry.signature === 'git status').allow, 2)
+check('a refusal is counted', habits.list().find((entry) => entry.signature === 'rm -rf build').block, 1)
+check('the summary ranks by weight', habits.summary(1)[0].signature, 'git status')
+const skillBody = habits.render()
+check('the skill declares its name', skillBody.includes('name: better-permit-habits'), true)
+check('the skill lists an allowed command', skillBody.includes('`git status`'), true)
+check('the skill lists a refused command', skillBody.includes('`rm -rf build`'), true)
+
+console.log('deferrals')
+const deferrals = createDeferrals({})
+deferrals.defer('s1', { tool: 'pwsh', reason: 'the tier did not cover it', waitedMs: 5000 })
+const notice = deferrals.take('s1')
+check('a notice is queued', typeof notice, 'object')
+check('a notice is delivered once', deferrals.take('s1'), undefined)
+const guidance = guidanceFor(notice)
+check('the guidance says not to retry', guidance.includes('不要用相同参数重试'), true)
+check('the guidance names the tool', guidance.includes('pwsh'), true)
+check('the guidance carries the reason', guidance.includes('the tier did not cover it'), true)
+
+console.log('reviewer model')
+{
+  const aiConfig = { baseUrl: 'https://example.test/v1', model: 'reviewer-1', apiKey: 'k', apiKeyEnv: '', timeoutMs: 1000, minConfidence: 0.6, maxTokens: 100, maxHabits: 5 }
+  const bodies = []
+  let reply = '{"verdict":"allow","confidence":0.9,"reason":"ordinary build cleanup"}'
+  globalThis.fetch = async (url, init) => {
+    bodies.push({ url, body: JSON.parse(init.body) })
+    return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: reply } }] }) }
+  }
+  const grader = createAiGrader({ config: aiConfig, habits })
+  check('the grader knows it is configured', grader.configured(), true)
+  const verdict = await grader.review({ tool: 'pwsh', args: { command: 'rm -rf build' }, risk: { key: 'destructive', label: '删除/覆盖', reasons: ['rm'] }, tier: aiTier, rules: tiers[aiTier] })
+  check('an allow reply is honoured', verdict.verdict, 'allow')
+  check('the endpoint is the chat completions path', bodies[0].url, 'https://example.test/v1/chat/completions')
+  check('the request names the model', bodies[0].body.model, 'reviewer-1')
+  check('the request carries the habit table', bodies[0].body.messages[1].content.includes('git status'), true)
+  reply = '{"verdict":"allow","confidence":0.2,"reason":"not sure"}'
+  const unsure = await grader.review({ tool: 'pwsh', args: { command: 'rm -rf build' }, risk: { key: 'destructive', label: '删除/覆盖' }, tier: aiTier, rules: tiers[aiTier] })
+  check('low confidence becomes a question', unsure.verdict, 'ask')
+  globalThis.fetch = async () => {
+    throw new Error('boom')
+  }
+  const broken = await grader.review({ tool: 'pwsh', args: {}, risk: { key: 'write' }, tier: aiTier, rules: tiers[aiTier] })
+  check('a broken endpoint becomes a question', broken.verdict, 'ask')
+  check('a broken endpoint says why', String(broken.reason).includes('boom'), true)
+  const bare = createAiGrader({ config: { ...aiConfig, baseUrl: '', model: '' }, habits })
+  check('an unconfigured grader is not configured', bare.configured(), false)
+  const unconfigured = await bare.review({ tool: 'pwsh', args: {}, risk: { key: 'write' }, tier: aiTier, rules: tiers[aiTier] })
+  check('an unconfigured grader asks', unconfigured.verdict, 'ask')
+  delete globalThis.fetch
+}
+
 console.log('commands and loopback API')
 {
   const commands = new Map()
   const routes = []
   const listeners = new Map()
-  const session = { header: { id: 'sess-1' }, tier: 'workspace-write-plugins' }
+  const session = { header: { id: 'sess-1' }, tier: 'workspace-write-edits' }
   const ctx = {
     logger: () => ({ info() {}, warn() {} }),
     on(event, listener) {
@@ -299,12 +370,16 @@ console.log('commands and loopback API')
     },
     permissionPresets: { current: (target) => target?.tier },
   }
-  apply(ctx, { trustedCommands: ['pnpm install'] })
+  apply(ctx, {
+    trustedCommands: ['pnpm install'],
+    skillDir: join(WS, 'skills'),
+    ai: { baseUrl: 'https://reviewer.test/v1', model: 'reviewer-1', apiKey: 'k' },
+  })
 
   const tiersCommand = commands.get('tiers')
   check('the /tiers command is registered', typeof tiersCommand?.handler, 'function')
   const status = tiersCommand.handler({ agent: { session } })
-  check('/tiers reports the current tier', status.text.includes('workspace-write-plugins'), true)
+  check('/tiers reports the current tier', status.text.includes('workspace-write-edits'), true)
   check('/tiers mentions the trusted-folder line', status.text.includes('本对话受信文件夹'), true)
   check('/tiers keeps its Chinese label', status.kind, 'success')
 
@@ -317,7 +392,7 @@ console.log('commands and loopback API')
   check('/trust remove drops the folder', removed.includes('已从本对话受信文件夹移除'), true)
 
   check('the API route is registered', routes.length, 1)
-  check('the route owns the approval prefix', routes[0].path, '/permission-tiers/approval')
+  check('the route owns the approval prefix', routes[0].path, '/better-permit/approval')
 
   const call = (method, url, body, headers) =>
     new Promise((done) => {
@@ -351,57 +426,57 @@ console.log('commands and loopback API')
       routes[0].handler(req, res)
     })
 
-  const unknown = await call('GET', '/permission-tiers/approval/detail?sessionId=sess-1&callId=none')
+  const unknown = await call('GET', '/better-permit/approval/detail?sessionId=sess-1&callId=none')
   check('an unknown call has no folder', unknown.body.folders.length, 0)
 
   const exec = { callId: 'c9', name: 'pwsh', arguments: { command: 'pnpm install --frozen-lockfile', cwd: join(WS, 'proj') } }
   await listeners.get('tools/pre-execute')[0](exec, async () => ({ kind: 'ask' }))
-  const detail = await call('GET', '/permission-tiers/approval/detail?sessionId=sess-1&callId=c9')
+  const detail = await call('GET', '/better-permit/approval/detail?sessionId=sess-1&callId=c9')
   check('the detail reports the pending command', detail.body.command, 'pnpm install --frozen-lockfile')
   check('the detail proposes the working folder', detail.body.folders.length, 1)
 
-  const trusted = await call('POST', '/permission-tiers/approval/trust', { sessionId: 'sess-1', callId: 'c9' })
+  const trusted = await call('POST', '/better-permit/approval/trust', { sessionId: 'sess-1', callId: 'c9' })
   check('the API trusts the pending folder', trusted.status, 200)
   check('the trusted set is returned', trusted.body.folders.length, 1)
 
-  const strayed = await call('POST', '/permission-tiers/approval/trust', { sessionId: 'sess-1', callId: 'unknown' })
+  const strayed = await call('POST', '/better-permit/approval/trust', { sessionId: 'sess-1', callId: 'unknown' })
   check('the API refuses a call that is not asking', strayed.status, 409)
 
-  const listed = await call('GET', '/permission-tiers/approval/trust?sessionId=sess-1')
+  const listed = await call('GET', '/better-permit/approval/trust?sessionId=sess-1')
   check('the API lists the trusted folders', listed.body.folders.length, 1)
 
   console.log('trusted-folder panel')
   const folder = abs(join(WS, 'proj'))
-  const panel = await call('GET', '/permission-tiers/approval/panel')
+  const panel = await call('GET', '/better-permit/approval/panel')
   check('the panel answers', panel.status, 200)
   check('the panel reports the workspace base', panel.body.base, WS)
   check('the panel starts with no global folders', panel.body.global.length, 0)
   check('the panel lists the configured commands', panel.body.configured.commands[0], 'pnpm install')
   check('the panel lists the conversation that holds a folder', panel.body.conversations.some((entry) => entry.id === 'sess-1'), true)
 
-  const refused = await call('POST', '/permission-tiers/approval/panel/trust', { scope: 'global', folder: folder }, {
+  const refused = await call('POST', '/better-permit/approval/panel/trust', { scope: 'global', folder: folder }, {
     origin: 'http://evil.example',
     host: '127.0.0.1:3079',
   })
   check('a cross-origin panel write is refused', refused.status, 403)
 
-  const bogus = await call('POST', '/permission-tiers/approval/panel/trust', { scope: 'global', folder: join(WS, 'definitely-not-here') })
+  const bogus = await call('POST', '/better-permit/approval/panel/trust', { scope: 'global', folder: join(WS, 'definitely-not-here') })
   check('a missing folder is refused', bogus.status, 400)
 
-  const globalAdd = await call('POST', '/permission-tiers/approval/panel/trust', { scope: 'global', folder })
+  const globalAdd = await call('POST', '/better-permit/approval/panel/trust', { scope: 'global', folder })
   check('the panel trusts a folder globally', globalAdd.status, 200)
   check('the global list carries it', globalAdd.body.global.length, 1)
 
-  const scopedAdd = await call('POST', '/permission-tiers/approval/panel/trust', { scope: 'session', sessionId: 'sess-2', folder })
+  const scopedAdd = await call('POST', '/better-permit/approval/panel/trust', { scope: 'session', sessionId: 'sess-2', folder })
   check('the panel trusts a folder inside a conversation', scopedAdd.body.conversations.some((entry) => entry.id === 'sess-2'), true)
 
-  const cleared = await call('POST', '/permission-tiers/approval/panel/clear', { scope: 'session', sessionId: 'sess-2' })
+  const cleared = await call('POST', '/better-permit/approval/panel/clear', { scope: 'session', sessionId: 'sess-2' })
   check('clearing a conversation drops its folders', cleared.body.conversations.some((entry) => entry.id === 'sess-2'), false)
 
-  const globalDrop = await call('POST', '/permission-tiers/approval/panel/untrust', { scope: 'global', folder })
+  const globalDrop = await call('POST', '/better-permit/approval/panel/untrust', { scope: 'global', folder })
   check('the panel drops a global folder', globalDrop.body.global.length, 0)
 
-  const afterPanel = await call('GET', '/permission-tiers/approval/trust?sessionId=sess-2')
+  const afterPanel = await call('GET', '/better-permit/approval/trust?sessionId=sess-2')
   check('the dismissed conversation is empty again', afterPanel.body.folders.length, 0)
 
   console.log('conversation rules API')
@@ -410,13 +485,13 @@ console.log('commands and loopback API')
   check('the /allow command is registered', typeof allowCommand?.handler, 'function')
   check('/allow with no argument explains itself', allowCommand.handler({ agent: { session }, rawInput: '' }).text.includes('本对话还没有放行规则'), true)
 
-  const granted = await call('POST', '/permission-tiers/approval/allow', { sessionId: 'sess-1', callId: 'c9' })
+  const granted = await call('POST', '/better-permit/approval/allow', { sessionId: 'sess-1', callId: 'c9' })
   check('the prompt allows the pending command class', granted.status, 200)
   check('the granted pattern is the command verb', granted.body.pattern, 'pnpm install')
-  const rulesList = await call('GET', '/permission-tiers/approval/rules?sessionId=sess-1')
+  const rulesList = await call('GET', '/better-permit/approval/rules?sessionId=sess-1')
   check('the rule is listed', rulesList.body.rules[0].pattern, 'pnpm install')
 
-  const strayAllow = await call('POST', '/permission-tiers/approval/allow', { sessionId: 'sess-1', callId: 'nope' })
+  const strayAllow = await call('POST', '/better-permit/approval/allow', { sessionId: 'sess-1', callId: 'nope' })
   check('the API refuses to allow a call that is not asking', strayAllow.status, 409)
 
   await listeners.get('tools/pre-execute')[0](
@@ -429,11 +504,65 @@ console.log('commands and loopback API')
   )
   check('a granted rule answers the next call', viaRule, 'allowed-once')
 
-  check('the panel lists the conversation rules', (await call('GET', '/permission-tiers/approval/panel')).body.rules.some((entry) => entry.id === 'sess-1'), true)
-  const droppedRule = await call('POST', '/permission-tiers/approval/panel/rule-remove', { sessionId: 'sess-1', pattern: 'pnpm install' })
+  check('the panel lists the conversation rules', (await call('GET', '/better-permit/approval/panel')).body.rules.some((entry) => entry.id === 'sess-1'), true)
+  const droppedRule = await call('POST', '/better-permit/approval/panel/rule-remove', { sessionId: 'sess-1', pattern: 'pnpm install' })
   check('the panel drops a rule', droppedRule.body.rules.some((entry) => entry.id === 'sess-1'), false)
-  const keptCommand = await call('POST', '/permission-tiers/approval/panel/rule-remove', { sessionId: 'sess-1' })
+  const keptCommand = await call('POST', '/better-permit/approval/panel/rule-remove', { sessionId: 'sess-1' })
   check('dropping without a pattern is refused', keptCommand.status, 400)
+
+  console.log('reviewer and habit endpoints')
+  const aiStatus = await call('GET', '/better-permit/approval/ai')
+  check('the ai endpoint reports configuration', aiStatus.body.configured, true)
+  check('the ai endpoint names the tier that uses it', aiStatus.body.aiTiers.includes('workspace-write-ai'), true)
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ choices: [{ message: { content: '{"verdict":"allow","confidence":1,"reason":"probe"}' } }] }),
+  })
+  const probe = await call('POST', '/better-permit/approval/ai/test')
+  check('the probe reaches the reviewer', probe.status, 200)
+  check('the probe reports the verdict', probe.body.verdict.verdict, 'allow')
+  globalThis.fetch = async () => {
+    throw new Error('down')
+  }
+  const deadProbe = await call('POST', '/better-permit/approval/ai/test')
+  check('a dead reviewer is reported as a failure', deadProbe.status, 502)
+  delete globalThis.fetch
+
+  const skillWrite = await call('POST', '/better-permit/approval/habits/skill')
+  check('the habit skill is written', skillWrite.status, 200)
+  check('the skill file exists on disk', existsSync(skillWrite.body.path), true)
+  const habitPanel = await call('GET', '/better-permit/approval/panel')
+  check('the panel reports the skill as generated', habitPanel.body.skill.exists, true)
+  check('the panel reports the hold setting', habitPanel.body.hold.ms, 0)
+  check('the panel reports the reviewer model', habitPanel.body.ai.model, 'reviewer-1')
+  check('the panel marks the ai tier', habitPanel.body.tiers.some((entry) => entry.ai === true), true)
+  const habitsGet = await call('GET', '/better-permit/approval/habits')
+  check('the habits endpoint answers', Array.isArray(habitsGet.body.habits), true)
+  const defList = await call('GET', '/better-permit/approval/deferrals')
+  check('the deferral endpoint answers', Array.isArray(defList.body.deferrals), true)
+}
+
+console.log('approval hold')
+{
+  const { ctx, session, listeners } = fakeContext({ tier: 'workspace-write-edits' })
+  apply(ctx, { holdMs: 60, holdAdvice: false, trustedCommands: [] })
+  const pre = listeners.get('tools/pre-execute')
+  const approval = listeners.get('approval/request')
+  await pre[0]({ callId: 'h1', name: 'pwsh', arguments: { command: 'flurble --x' } }, async () => ({ kind: 'ask' }))
+  const started = Date.now()
+  const outcome = await approval[0](
+    { toolName: 'pwsh', callId: 'h1', reason: 'escalate sandbox to danger-full-access: something', agent: { session } },
+    () => new Promise(() => {}),
+  )
+  check('a stalled approval is settled as rejected', outcome, 'rejected')
+  check('it does not wait for the human', Date.now() - started < 3000, true)
+  const denied = await pre[0]({ callId: 'h2', name: 'pwsh', arguments: { command: 'dir' }, agent: { session } }, async () => ({ kind: 'ask' }))
+  check('the next call is refused once', denied.kind, 'deny')
+  check('the refusal explains the pause', String(denied.reason).includes('已暂缓执行'), true)
+  const after = await pre[0]({ callId: 'h3', name: 'pwsh', arguments: { command: 'dir' }, agent: { session } }, async () => ({ kind: 'ask' }))
+  check('the notice is delivered only once', after.kind, 'ask')
 }
 
 try {

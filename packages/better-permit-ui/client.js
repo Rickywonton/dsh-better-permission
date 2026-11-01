@@ -9,15 +9,15 @@
  *  - `settings.section`: one page that lists and edits every trusted folder, the
  *    global list and each conversation's list, with a trust overview.
  */
-const API = '/permission-tiers/approval'
+const API = '/better-permit/approval'
 
 window.__ModuleLoader__.load({
-  id: 'dsh-permission-tiers-ui',
+  id: 'better-permit-ui',
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const API = '/permission-tiers/approval'
-    const NS = 'permission-tiers'
+    const API = '/better-permit/approval'
+    const NS = 'better-permit'
 
 
     const zh = {
@@ -74,6 +74,44 @@ window.__ModuleLoader__.load({
       pluginScope: '插件',
       escalateScope: '提权',
       otherAsksScope: '其它',
+      aiTitle: '评审模型',
+      aiHint: '「AI 判定」档位会先把命令交给这个模型看一眼；模型只给建议，最终仍由档位规则决定。',
+      aiMissing: '还没有配置评审模型。请在插件配置里填 ai.baseUrl、ai.model，以及 ai.apiKey 或 ai.apiKeyEnv；缺这些时「AI 判定」档位会退回逐个询问你。',
+      aiModel: '模型',
+      aiBase: '接口地址',
+      aiKey: '密钥来源',
+      aiTimeout: '超时',
+      aiThreshold: '置信度下限',
+      aiLastCall: '上次探测',
+      aiOk: '成功',
+      aiFailed: '失败',
+      aiTest: '测试连接',
+      aiTesting: '正在测试…',
+      aiTestOk: '连接正常',
+      aiTestEmpty: '没有拿到结果',
+      keyConfig: '配置文件',
+      keyEnv: '环境变量',
+      holdTitle: '审批等待',
+      holdHint: '超时后这一次操作会暂缓，模型会被告知改走其它步骤；这个值来自插件配置里的 holdMs。',
+      holdLimited: '超过 %s 秒未回答即暂缓该操作，并让模型改走其它步骤',
+      holdForever: '不限时，会一直等你回答',
+      habitsTitle: '审批习惯',
+      habitsHint: '按签名统计你过去允许或拦下的操作；生成 skill 后，模型会先读它再决定怎么请求批准。',
+      habitsEmpty: '（暂无记录）',
+      habitsSig: '签名',
+      habitsAllowCount: '允许',
+      habitsBlockCount: '拦下',
+      habitsRisk: '风险',
+      habitsLast: '最近',
+      skillLine: 'skill 文件',
+      skillExists: '已生成',
+      skillMissing: '未生成',
+      skillGenerate: '生成 / 更新 skill',
+      skillBusy: '正在生成…',
+      skillDone: '已写入',
+      aiBadge: 'AI 判定',
+      aiDetailAsk: '本档位会先问评审模型 %s（置信度 ≥ %s）再决定是否打扰你',
+      aiDetailDirect: '评审模型未配置：本档位会直接问你',
     }
 
     const en = {
@@ -130,6 +168,44 @@ window.__ModuleLoader__.load({
       pluginScope: 'plugins',
       escalateScope: 'escalation',
       otherAsksScope: 'other',
+      aiTitle: 'Review model',
+      aiHint: 'The "AI verdict" tier asks this model to look at a command first; the model only advises, and the tier rules still decide.',
+      aiMissing: 'No review model yet. Set ai.baseUrl and ai.model in the plugin config, plus ai.apiKey or ai.apiKeyEnv; without them the "AI verdict" tier falls back to asking you one by one.',
+      aiModel: 'Model',
+      aiBase: 'Endpoint',
+      aiKey: 'Key source',
+      aiTimeout: 'Timeout',
+      aiThreshold: 'Confidence floor',
+      aiLastCall: 'Last probe',
+      aiOk: 'ok',
+      aiFailed: 'failed',
+      aiTest: 'Test connection',
+      aiTesting: 'Testing…',
+      aiTestOk: 'Connected',
+      aiTestEmpty: 'No result',
+      keyConfig: 'config file',
+      keyEnv: 'env',
+      holdTitle: 'Approval wait',
+      holdHint: 'When the wait runs out the operation is deferred and the model is told to take another path; the value comes from holdMs in the plugin config.',
+      holdLimited: 'Not answered within %s s: hold the operation back and let the model take another step',
+      holdForever: 'No timeout — it waits for your answer',
+      habitsTitle: 'Approval habits',
+      habitsHint: 'What you allowed or blocked per signature; once the skill is generated the model reads it before asking.',
+      habitsEmpty: '(no entries yet)',
+      habitsSig: 'Signature',
+      habitsAllowCount: 'allowed',
+      habitsBlockCount: 'blocked',
+      habitsRisk: 'risk',
+      habitsLast: 'last',
+      skillLine: 'skill file',
+      skillExists: 'generated',
+      skillMissing: 'missing',
+      skillGenerate: 'Generate / update skill',
+      skillBusy: 'Generating…',
+      skillDone: 'Written',
+      aiBadge: 'AI verdict',
+      aiDetailAsk: 'This tier asks the review model %s first (confidence ≥ %s) before deciding whether to bother you',
+      aiDetailDirect: 'Review model not configured: this tier asks you directly',
     }
 
     const T = { zh, en }
@@ -199,6 +275,48 @@ window.__ModuleLoader__.load({
     const selectStyle = Object.assign({}, inputStyle, { flex: '0 1 280px' })
     const errorStyle = { margin: 0, fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-state-error-primary)' }
     const emptyStyle = { margin: 0, fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }
+    const infoStyle = Object.assign({}, mono, {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '4px',
+      color: 'var(--dsw-alias-label-secondary)',
+    })
+    const badgeStyle = {
+      display: 'inline-block',
+      padding: '0 6px',
+      borderRadius: '999px',
+      border: '1px solid var(--dsw-alias-border-l2)',
+      background: 'var(--dsw-alias-bg-layer-2)',
+      color: 'var(--dsw-alias-label-secondary)',
+      fontSize: '11px',
+      lineHeight: '16px',
+      flex: '0 0 auto',
+    }
+    const habitHeadStyle = {
+      display: 'flex',
+      gap: '6px',
+      alignItems: 'baseline',
+      padding: '0 8px',
+      fontSize: '11px',
+      lineHeight: '16px',
+      color: 'var(--dsw-alias-label-tertiary)',
+    }
+    const habitSignStyle = Object.assign({}, mono, {
+      flex: '1 1 auto',
+      minWidth: 0,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      color: 'var(--dsw-alias-label-primary)',
+    })
+    const habitCountStyle = {
+      flex: '0 0 auto',
+      minWidth: '48px',
+      textAlign: 'right',
+      fontSize: '11px',
+      lineHeight: '16px',
+      color: 'var(--dsw-alias-label-secondary)',
+    }
 
     function Section(props) {
       return h(
@@ -345,6 +463,8 @@ window.__ModuleLoader__.load({
           ? t('covered')
           : ''
       const canAllow = typeof detail.signature === 'string' && detail.signature.length > 0 && !detail.rule
+      const ai = detail.ai && typeof detail.ai === 'object' ? detail.ai : null
+      const aiLine = ai ? (ai.configured ? format(t('aiDetailAsk'), [ai.model, ai.minConfidence]) : t('aiDetailDirect')) : ''
 
       return h(
         'div',
@@ -362,6 +482,9 @@ window.__ModuleLoader__.load({
           : null,
         tierLine
           ? h('span', { style: { fontSize: '11px', lineHeight: '15px', color: 'var(--dsw-alias-label-tertiary)' } }, tierLine)
+          : null,
+        aiLine
+          ? h('span', { style: { fontSize: '11px', lineHeight: '15px', color: 'var(--dsw-alias-label-secondary)' } }, aiLine)
           : null,
         canAllow
           ? h(
@@ -452,6 +575,180 @@ window.__ModuleLoader__.load({
     // nothing makes them call `undefined(snapshot)` and throw.
     const selectAll = (value) => value
 
+    // `%s` placeholders keep the review-model sentence one dictionary entry per
+    // language, so zh/en never drift apart.
+    function format(template, values) {
+      let index = 0
+      return String(template === undefined ? '' : template).replace(/%s/g, () => {
+        const value = values[index]
+        index += 1
+        return value === undefined || value === null ? '' : String(value)
+      })
+    }
+
+    function keySourceLabel(t, ai) {
+      const source = ai && typeof ai.keySource === 'string' ? ai.keySource : 'none'
+      if (source === 'config') return t('keyConfig')
+      if (source.indexOf('env:') === 0) return `${t('keyEnv')} ${source.slice(4)}`
+      return t('none')
+    }
+
+    function shortDate(value) {
+      const stamp = typeof value === 'number' ? value : Number(value)
+      if (!stamp || !isFinite(stamp)) return '—'
+      const date = new Date(stamp)
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const day = String(date.getDate()).padStart(2, '0')
+      return `${date.getFullYear()}-${month}-${day}`
+    }
+
+    function loadPanel() {
+      return fetch(`${API}/panel`).then((response) =>
+        response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)),
+      )
+    }
+
+    // The review-model card: either the live configuration plus a probe button,
+    // or the one hint that says which config keys are missing. No button in the
+    // second case, because a probe cannot succeed without them.
+    function aiCard(t, ai, probe, onTest) {
+      const config = ai && typeof ai === 'object' ? ai : {}
+      if (config.configured !== true) {
+        return h(Section, { title: t('aiTitle'), hint: t('aiHint') }, h('p', { style: hintStyle }, t('aiMissing')))
+      }
+      const last = config.lastCall && typeof config.lastCall.at === 'number' && config.lastCall.at > 0 ? config.lastCall : null
+      const lines = [
+        `${t('aiModel')}: ${config.model}`,
+        `${t('aiBase')}: ${config.baseUrl}`,
+        `${t('aiKey')}: ${keySourceLabel(t, config)}`,
+        `${t('aiTimeout')}: ${config.timeoutMs} ms  ·  ${t('aiThreshold')}: ${config.minConfidence}`,
+      ]
+      if (last) {
+        lines.push(
+          `${t('aiLastCall')}: ${last.ok ? t('aiOk') : t('aiFailed')}${typeof last.ms === 'number' ? ` · ${last.ms} ms` : ''}${last.reason ? ` · ${last.reason}` : ''}`,
+        )
+      }
+      const probeLine =
+        probe.status === 'ok'
+          ? `${t('aiTestOk')}${probe.ms ? ` · ${probe.ms} ms` : ''}`
+          : probe.status === 'error'
+            ? probe.error
+            : ''
+      return h(
+        Section,
+        { title: t('aiTitle'), hint: t('aiHint') },
+        h(
+          'div',
+          { style: infoStyle },
+          lines.map((line) => h('span', { key: line }, line)),
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+          h(
+            'button',
+            {
+              type: 'button',
+              style: probe.status === 'busy' ? Object.assign({}, buttonStyle, disabledButton) : buttonStyle,
+              disabled: probe.status === 'busy',
+              onClick: () => {
+                if (probe.status !== 'busy') onTest()
+              },
+            },
+            probe.status === 'busy' ? t('aiTesting') : t('aiTest'),
+          ),
+          probeLine ? h('span', { style: probe.status === 'error' ? errorStyle : hintStyle }, probeLine) : null,
+        ),
+      )
+    }
+
+    // How long an approval may stay unanswered. `holdMs: 0` means "forever".
+    function holdCard(t, hold) {
+      const ms = hold && typeof hold.ms === 'number' && hold.ms > 0 ? hold.ms : 0
+      const waitSeconds = ms % 1000 === 0 ? ms / 1000 : Math.round(ms / 100) / 10
+      const line = ms > 0 ? format(t('holdLimited'), [waitSeconds]) : t('holdForever')
+      return h(
+        Section,
+        { title: t('holdTitle'), hint: t('holdHint') },
+        h(
+          'p',
+          {
+            style: {
+              margin: 0,
+              fontSize: '13px',
+              lineHeight: '20px',
+              color: ms > 0 ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-label-secondary)',
+            },
+          },
+          line,
+        ),
+      )
+    }
+
+    // What the user has allowed or blocked so far, plus the generated skill file
+    // the model reads before it asks for approval.
+    function habitsCard(t, habits, skill, skillState, onGenerate) {
+      const rows = Array.isArray(habits) ? habits : []
+      const info = skill && typeof skill === 'object' ? skill : { path: '', exists: false }
+      const table =
+        rows.length === 0
+          ? h('p', { style: emptyStyle }, t('habitsEmpty'))
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+              h(
+                'div',
+                { style: habitHeadStyle },
+                h('span', { style: { flex: '1 1 auto', minWidth: 0 } }, t('habitsSig')),
+                h('span', { style: habitCountStyle }, t('habitsAllowCount')),
+                h('span', { style: habitCountStyle }, t('habitsBlockCount')),
+                h('span', { style: habitCountStyle }, t('habitsRisk')),
+                h('span', { style: habitCountStyle }, t('habitsLast')),
+              ),
+              rows.map((entry, index) =>
+                h(
+                  'div',
+                  { key: `${entry.signature}-${index}`, style: Object.assign({}, rowStyle, { gap: '6px', padding: '4px 8px' }) },
+                  h('span', { style: habitSignStyle, title: entry.signature }, entry.signature),
+                  h('span', { style: habitCountStyle }, String(entry.allow)),
+                  h('span', { style: habitCountStyle }, String(entry.block)),
+                  h('span', { style: Object.assign({}, habitCountStyle, { color: riskColor(entry.risk) }) }, riskLabel(entry.risk)),
+                  h('span', { style: habitCountStyle }, shortDate(entry.last)),
+                ),
+              ),
+            )
+      const skillLine = `${t('skillLine')}: ${info.path || t('none')} · ${info.exists ? t('skillExists') : t('skillMissing')}`
+      const skillNote =
+        skillState.status === 'done'
+          ? `${t('skillDone')}: ${skillState.path}${skillState.bytes ? ` · ${skillState.bytes} B` : ''}`
+          : skillState.status === 'error'
+            ? skillState.error
+            : ''
+      return h(
+        Section,
+        { title: t('habitsTitle'), hint: t('habitsHint') },
+        table,
+        h('span', { style: Object.assign({}, mono, { color: 'var(--dsw-alias-label-secondary)' }) }, skillLine),
+        h(
+          'div',
+          { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+          h(
+            'button',
+            {
+              type: 'button',
+              style: skillState.status === 'busy' ? Object.assign({}, buttonStyle, disabledButton) : buttonStyle,
+              disabled: skillState.status === 'busy',
+              onClick: () => {
+                if (skillState.status !== 'busy') onGenerate()
+              },
+            },
+            skillState.status === 'busy' ? t('skillBusy') : t('skillGenerate'),
+          ),
+          skillNote ? h('span', { style: skillState.status === 'error' ? errorStyle : hintStyle }, skillNote) : null,
+        ),
+      )
+    }
+
     function TrustedFoldersPanel(props) {
       const t = typeof props.t === 'function' ? props.t : (key) => (T.zh[key] !== undefined ? T.zh[key] : key)
       const [data, setData] = React.useState(null)
@@ -460,6 +757,8 @@ window.__ModuleLoader__.load({
       const [globalDraft, setGlobalDraft] = React.useState('')
       const [sessionDraft, setSessionDraft] = React.useState('')
       const [selected, setSelected] = React.useState('')
+      const [probe, setProbe] = React.useState({ status: 'idle', ms: 0, error: '' })
+      const [skillState, setSkillState] = React.useState({ status: 'idle', path: '', bytes: 0, error: '' })
 
       const list = typeof props.useSessions === 'function' ? props.useSessions(selectAll) : undefined
       const conversations = React.useMemo(() => {
@@ -470,10 +769,7 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => {
         let alive = true
-        fetch(`${API}/panel`)
-          .then((response) => {
-            return response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))
-          })
+        loadPanel()
           .then((payload) => {
             if (alive) setData(payload)
           })
@@ -484,6 +780,63 @@ window.__ModuleLoader__.load({
           alive = false
         }
       }, [])
+
+      async function reload() {
+        try {
+          const payload = await loadPanel()
+          setData(payload)
+          return payload
+        } catch (cause) {
+          setError(String((cause && cause.message) || cause))
+          return null
+        }
+      }
+
+      async function testAi() {
+        setProbe({ status: 'busy', ms: 0, error: '' })
+        try {
+          const response = await fetch(`${API}/ai/test`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({}),
+          })
+          const payload = await response.json().catch(() => null)
+          if (!response.ok) throw new Error((payload && payload.error) || `HTTP ${response.status}`)
+          if (payload && payload.ok) {
+            setProbe({ status: 'ok', ms: typeof payload.ms === 'number' ? payload.ms : 0, error: '' })
+          } else {
+            setProbe({ status: 'error', ms: 0, error: (payload && payload.error) || t('aiTestEmpty') })
+          }
+        } catch (cause) {
+          setProbe({ status: 'error', ms: 0, error: String((cause && cause.message) || cause) })
+        }
+      }
+
+      async function generateSkill() {
+        setSkillState({ status: 'busy', path: '', bytes: 0, error: '' })
+        try {
+          const response = await fetch(`${API}/habits/skill`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({}),
+          })
+          const payload = await response.json().catch(() => null)
+          if (payload && payload.error) {
+            setSkillState({ status: 'error', path: '', bytes: 0, error: String(payload.error) })
+            return
+          }
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          setSkillState({
+            status: 'done',
+            path: payload && typeof payload.path === 'string' ? payload.path : '',
+            bytes: payload && typeof payload.bytes === 'number' ? payload.bytes : 0,
+            error: '',
+          })
+          await reload()
+        } catch (cause) {
+          setSkillState({ status: 'error', path: '', bytes: 0, error: String((cause && cause.message) || cause) })
+        }
+      }
 
       React.useEffect(() => {
         if (selected || conversations.length === 0) return
@@ -610,6 +963,7 @@ window.__ModuleLoader__.load({
                       { style: { display: 'flex', gap: '8px', alignItems: 'baseline', flexWrap: 'wrap' } },
                       h('span', { style: { fontSize: '13px', lineHeight: '19px', fontWeight: 600 } }, tier.label),
                       h('span', { style: Object.assign({}, mono, { color: 'var(--dsw-alias-label-tertiary)' }) }, tier.key),
+                      tier.ai === true ? h('span', { style: badgeStyle }, t('aiBadge')) : null,
                       h(
                         'span',
                         { style: { marginLeft: 'auto', fontSize: '11px', lineHeight: '15px', color: riskColor(tier.maxRisk) } },
@@ -626,6 +980,10 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
+
+        data ? aiCard(t, data.ai, probe, testAi) : null,
+        data ? holdCard(t, data.hold) : null,
+        data ? habitsCard(t, data.habits, data.skill, skillState, generateSkill) : null,
 
         riskRows.length === 0
           ? null
@@ -840,7 +1198,7 @@ window.__ModuleLoader__.load({
               zh,
               en,
             }),
-          'permission-tiers: panel dictionaries',
+          'better-permit: panel dictionaries',
         )
       } catch {
         /* localization is optional */
@@ -867,7 +1225,7 @@ window.__ModuleLoader__.load({
         ctx.slots.register(
           {
             name: 'settings.section',
-            id: 'permission-tiers',
+            id: 'better-permit',
             order: 50,
             label: () => t('nav'),
             locale: NS,

@@ -1,6 +1,23 @@
 # Changelog
 
-版本号跟随 `packages/*/package.json`。
+版本号跟随 `packages/*/package.json`。每个版本的详细内容另见 [`docs/RELEASES.md`](docs/RELEASES.md)。
+
+## 0.5.0
+
+- 改名：`dsh-permission-tiers` → **`better-permit`**，浏览器半区 → `better-permit-ui`，
+  端点前缀 `/permission-tiers/approval` → `/better-permit/approval`，插件行 id `better-permit`。
+- 删档：移除 `workspace-write-safe`（只读命令）与 `workspace-write-plugins`（插件免批准），
+  它们的功能被 `workspace-write-edits` 及更宽档位覆盖。
+- 新增档位 `workspace-write-ai`（工作区内 · AI 判定）：上限之外的操作先问你自己配置的评审模型。
+- 新增评审模型客户端（`lib/ai.js`，OpenAI 兼容 `/chat/completions`）：只回 JSON 判定，超时/报错/
+  低置信度一律 fail-closed 回落到人工；`danger-full-access` 提权不由模型决定。
+- 新增审批超时暂缓（`holdMs` / `holdAdvice`）：弹窗久未回答就把这次调用判为暂缓，
+  并给该对话排一条一次性通知，让模型改走不依赖它的步骤。
+- 新增习惯库（`lib/habits.js`）与 skill 导出：允许/拒绝都记账，可写成
+  `better-permit-habits` skill 文件供后续会话与评审模型参考。
+- 面板新增「评审模型」「审批等待」「审批习惯」三块与档位的「AI 判定」徽标；
+  审批弹窗新增评审模型行。
+- 新端点：`GET /ai`、`POST /ai/test`、`GET /habits`、`POST /habits/skill`、`GET /deferrals`。
 
 ## 0.4.1
 
@@ -24,7 +41,7 @@
 
 - 新增「权限与信任」设置页面板：全局/单对话受信文件夹、各对话概览、配置里的信任清单、最近自动放行。
 - 新增全局受信文件夹（跨对话生效）。
-- 浏览器半区拆成独立的 `permission-tiers-ui` 包：`dsh-client-modules` 按「行名 + baseUrl」永久缓存
+- 浏览器半区拆成独立的 `better-permit-ui` 包：`dsh-client-modules` 按「行名 + baseUrl」永久缓存
   扫描结果且没有失效路径，主包在加上 `dsh.client` 之前被扫描过一次就再也不会加载。
 
 ## 0.2.0

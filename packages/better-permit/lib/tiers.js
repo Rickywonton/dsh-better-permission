@@ -6,7 +6,7 @@
  * built-in presets get no rules here (they keep asking), every tier added by
  * this bundle carries a rule set.
  *
- * Every tier declares three things:
+ * Every tier declares four things:
  *  - `plugin`: what it may do with plugin_manager calls;
  *  - `escalate`: whether a sandbox escalation is auto-approved (`off`),
  *    auto-approved after a trust check (`trusted`) or always (`all`);
@@ -14,7 +14,10 @@
  *    before the tier refuses to answer it (see lib/risk.js). `maxRisk` is a
  *    ceiling — an operation graded above it always reaches a human, and
  *    `alwaysAsk` names levels that are refused even when lower-risk siblings
- *    in the same request would pass.
+ *    in the same request would pass;
+ *  - `ai`: when true, an operation above the ceiling is handed to the
+ *    configured reviewer model instead of straight to the user. `alwaysAsk`
+ *    still wins over the model, so the levels listed there stay human-only.
  */
 
 /** plugin_manager action -> coarse category the tier table talks about. */
@@ -41,65 +44,61 @@ const HIGH_RISK = ['destructive', 'system', 'publish']
  * most conservative to the widest.
  */
 export const DEFAULT_TIERS = {
-  'workspace-write-safe': {
-    label: '工作区内 · 只读命令',
-    description: '只自动放行只读命令（列表、查看、查询）与插件列出；任何写入、删除、系统操作、外发都仍会询问。',
-    rank: 2,
-    plugin: { read: true, toggle: false, install: false, remove: false, exemption: false },
-    escalate: { 'workspace-write': 'off', 'danger-full-access': 'off' },
-    otherAsks: false,
-    maxRisk: 'read',
-    alwaysAsk: HIGH_RISK,
-  },
-  'workspace-write-plugins': {
-    label: '工作区内 · 插件免批准',
-    description: '工作区内自由修改；插件列出、启用/停用、安装自动放行，移除插件、版本豁免与安装脚本仍需确认。',
-    rank: 3,
-    plugin: { read: true, toggle: true, install: 'all', remove: false, exemption: false },
-    escalate: { 'workspace-write': 'off', 'danger-full-access': 'off' },
-    otherAsks: false,
-    maxRisk: 'read',
-    alwaysAsk: HIGH_RISK,
-  },
   'workspace-write-edits': {
     label: '工作区内 · 写入自动',
     description: '在工作区内写入、装依赖、跑构建自动放行；删除/覆盖、系统操作、往外发仍会询问，完全访问提权也仍需确认。',
-    rank: 4,
+    rank: 2,
     plugin: { read: true, toggle: true, install: 'all', remove: false, exemption: false },
     escalate: { 'workspace-write': 'all', 'danger-full-access': 'off' },
     otherAsks: false,
     maxRisk: 'write',
     alwaysAsk: HIGH_RISK,
+    ai: false,
   },
   'workspace-write-trusted': {
     label: '工作区内 · 受信放行',
     description: '在工作区内写入之上，受信目录内的路径与受信前缀的命令可自动提权；删除、系统操作与外发仍会询问。',
-    rank: 5,
+    rank: 3,
     plugin: { read: true, toggle: true, install: 'all', remove: false, exemption: false },
     escalate: { 'workspace-write': 'trusted', 'danger-full-access': 'trusted' },
     otherAsks: false,
     maxRisk: 'write',
     alwaysAsk: HIGH_RISK,
+    ai: false,
+  },
+  'workspace-write-ai': {
+    label: '工作区内 · AI 判定',
+    description:
+      '常规读写由规则放行；超出台阶的危险操作交给你自己配置的评审模型判断，它说安全就直接执行，说不准或说危险才问你。系统层与对外发布始终由你确认。',
+    rank: 4,
+    plugin: { read: true, toggle: true, install: 'all', remove: false, exemption: false },
+    escalate: { 'workspace-write': 'all', 'danger-full-access': 'off' },
+    otherAsks: false,
+    maxRisk: 'write',
+    alwaysAsk: ['system', 'publish'],
+    ai: true,
   },
   'workspace-write-guarded': {
     label: '工作区内 · 高危才问',
     description: '读写、装依赖、删除都自动放行；只有系统层操作、对外发布和识别不出的命令才会询问。',
-    rank: 6,
+    rank: 5,
     plugin: { read: true, toggle: true, install: 'all', remove: false, exemption: false },
     escalate: { 'workspace-write': 'all', 'danger-full-access': 'all' },
     otherAsks: true,
     maxRisk: 'destructive',
     alwaysAsk: ['system', 'publish', 'unknown'],
+    ai: false,
   },
   'workspace-write-autopilot': {
     label: '工作区内 · 自动放行',
     description: '自动批准全部沙箱提权与其它审批请求；移除插件、版本豁免与安装脚本仍需确认。',
-    rank: 7,
+    rank: 6,
     plugin: { read: true, toggle: true, install: 'all', remove: false, exemption: false },
     escalate: { 'workspace-write': 'all', 'danger-full-access': 'all' },
     otherAsks: true,
     maxRisk: 'all',
     alwaysAsk: [],
+    ai: false,
   },
 }
 
@@ -167,6 +166,7 @@ export function normalizeRules(key, rules) {
     otherAsks: rules?.otherAsks === true,
     maxRisk: ceiling(rules?.maxRisk),
     alwaysAsk: riskList(rules?.alwaysAsk),
+    ai: rules?.ai === true,
   }
 }
 

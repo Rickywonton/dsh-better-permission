@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Permission Tiers",
+    "description": "Graded permission presets with a risk ceiling per tier, an optional AI reviewer, a pause-after-timeout mode and an exportable habit skill, plus trusted folders and per-conversation command rules."
+  }
+}

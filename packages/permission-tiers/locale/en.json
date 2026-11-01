@@ -1,6 +1,0 @@
-{
-  "meta": {
-    "title": "Permission Tiers",
-    "description": "Graded permission presets with a risk ceiling per tier, plus trusted folders, per-conversation command rules and automatic plugin management approvals."
-  }
-}
