@@ -1,7 +1,8 @@
 {
   "name": "dsh-permission-tiers",
   "version": "0.4.0",
-  "private": true,
+  "license": "MIT",
+  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "permissions", "approval", "sandbox"],
   "description": "Graded permission tiers with a risk ceiling per tier, trusted folders and per-conversation command rules on top of the built-in permission presets.",
   "type": "module",
   "main": "./index.js",

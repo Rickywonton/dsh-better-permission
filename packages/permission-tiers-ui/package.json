@@ -1,7 +1,8 @@
 {
   "name": "dsh-permission-tiers-ui",
   "version": "0.4.1",
-  "private": true,
+  "license": "MIT",
+  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "permissions", "settings-page"],
   "description": "Browser half of the permission-tiers plugin: risk badges and both approval shortcuts, plus the Permissions and trust settings page.",
   "type": "module",
   "main": "./index.js",
