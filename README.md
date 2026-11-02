@@ -30,6 +30,7 @@
 - **习惯沉淀**：允许/拒绝都记进习惯库，可导出成一个 skill 文件（`better-permit-habits`），
   之后的会话和评审模型都能先看它一眼。
 - **受信文件夹**：审批弹窗里一键「信任此文件夹并允许本次（仅本对话）」，也可 `/trust add <目录>`。
+  受信目录在**所有档位**都算数（含 AI 判定、高危才问、自动放行），不受当前档位口径限制。
 - **本对话放行规则**：审批弹窗里一键「本对话总是允许这条命令」（类似 Trae），也可 `/allow add <命令>`。
 - **审批解释**：每次弹窗都会用中文说清"这一步在做什么、最坏会怎样"。配好评审模型时这句话由模型写，
   否则用命令、风险等级和"档位为什么没放行它"拼出来（模型超时/报错/答空都自动回落到这句）。
@@ -54,6 +55,10 @@
 
 档位表在 [`packages/better-permit/cordis.patch.yml`](packages/better-permit/cordis.patch.yml)，
 风险上限用 `maxRisk`，即便在上限内也强制询问的用 `alwaysAsk`，需要模型参与判定的用 `ai: true`。
+
+受信文件夹不在这张表里：它对**所有档位**都生效——命中受信目录的操作会绕过档位上限（也绕过评审模型），
+但绕不过该档位的 `alwaysAsk`。完全访问提权的门是例外：AI 判定档的 `danger-full-access` 门为 `off`，
+受信放行与高危才问档才允许「路径本身就受信」的完全访问提权。
 
 ## 风险分级
 
@@ -210,7 +215,7 @@ packages/better-permit/         Host 半区
   lib/session-rules.js             按对话的命令放行规则存储
   lib/journal.js                   最近自动放行记录
   cordis.patch.yml                 档位表 + 插件挂载行
-  test/engine.test.mjs             198 项离线断言
+  test/engine.test.mjs             209 项离线断言
 packages/better-permit-ui/      浏览器半区
   client.js                        审批详情组件 + 设置页面板
   test/client.smoke.mjs            冒烟测试（自带 hooks 引擎，真渲染组件）
@@ -224,7 +229,7 @@ docs/RELEASES.md                   每个版本改了什么
 
 ```pwsh
 cd packages/better-permit
-node test/engine.test.mjs        # 198 checks
+node test/engine.test.mjs        # 209 checks
 
 cd ../better-permit-ui
 node test/client.smoke.mjs       # 72 checks：渲染 + 交互冒烟
@@ -236,7 +241,9 @@ node test/client.smoke.mjs       # 72 checks：渲染 + 交互冒烟
 
 - 风险分级是基于命令文本的启发式判断，不是沙箱：它能挡住"一看就危险"的命令，
   但挡不住伪装过的东西。真正的约束仍然是沙箱模式和档位的风险上限。
-- 受信文件夹只在「受信放行」档位里放宽工作区提权，**不会**把档位提升成完全访问。
+- 受信文件夹在所有档位里都算数（含 AI 判定、高危才问、自动放行）：文件夹内的普通命令与文件改动直接放行，
+  既不问你、也不再去问评审模型；它不能越过该档位的「始终询问」清单。完全访问提权只在受信放行 / 高危才问档、
+  且目标路径本身就受信时才自动放行，AI 判定档的完全访问永远问你。
 - 评审模型看到的是命令文本与工作目录，不是命令的真实副作用；它的判断只用于减少打扰。
 - 审批超时暂缓之后，之前那个弹窗仍然在界面上；它再被点开时已经不影响模型（那一步已经以"暂缓"结束）。
 - 子会话默认继承父对话的档位；父对话改了档位，已经在跑的子会话不会跟着变。

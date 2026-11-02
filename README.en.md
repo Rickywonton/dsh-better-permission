@@ -31,6 +31,7 @@ and the behavior is exactly the same as the built-in one.
 - **Habit capture**: every allow/deny is recorded in a habit store and can be exported as a skill file (`better-permit-habits`),
   which later sessions and the reviewer model can glance at first.
 - **Trusted folders**: one-click "trust this folder and allow this call (this conversation only)" in the approval dialog, or `/trust add <dir>`.
+  A trusted folder counts on **every** tier (AI review, high-risk-only and autopilot included), not just on the trusted tier.
 - **Per-conversation allow rules**: one-click "always allow this command in this conversation" in the approval dialog (similar to Trae), or `/allow add <command>`.
 - **Approval explanation**: every dialog explains, in Chinese, what the step is doing and what the worst outcome would be.
   With a reviewer model configured the sentence is written by the model; otherwise it is composed from the command, the risk grade
@@ -57,6 +58,11 @@ and the behavior is exactly the same as the built-in one.
 
 The tier table lives in [`packages/better-permit/cordis.patch.yml`](packages/better-permit/cordis.patch.yml);
 the risk ceiling is `maxRisk`, actions that must ask even below the ceiling are in `alwaysAsk`, and tiers that involve the model use `ai: true`.
+
+Trusted folders are deliberately not in that table: they count on **every** tier, so an operation inside a trusted
+folder skips the tier ceiling (and the reviewer model) — but never the tier's `alwaysAsk` list. Full-access
+escalation is the one exception: the AI tier switches that gate `off`, and only the trusted / high-risk-only tiers
+auto-approve a full-access widening whose target path is itself trusted.
 
 ## Risk grading
 
@@ -211,7 +217,7 @@ packages/better-permit/         Host half
   lib/session-rules.js             per-conversation command allow-rule storage
   lib/journal.js                   recent auto-approval records
   cordis.patch.yml                 tier table + plugin mount line
-  test/engine.test.mjs             198 offline checks
+  test/engine.test.mjs             209 offline checks
 packages/better-permit-ui/      browser half
   client.js                        approval detail component + Settings page panel
   test/client.smoke.mjs            smoke test (own hooks engine, really renders components)
@@ -225,7 +231,7 @@ Only Node is needed (no third-party dependencies, no build step):
 
 ```pwsh
 cd packages/better-permit
-node test/engine.test.mjs        # 198 checks
+node test/engine.test.mjs        # 209 checks
 
 cd ../better-permit-ui
 node test/client.smoke.mjs       # 72 checks: render + interaction smoke test
@@ -237,7 +243,10 @@ The tests use temporary directories as fixtures and run on both Windows and Linu
 
 - Risk grading is a heuristic over command text, not a sandbox: it stops commands that look dangerous at a glance,
   but it does not stop disguised ones. The real constraint is still the sandbox mode and the tier's risk ceiling.
-- Trusted folders only relax workspace escalation in the "trusted" tier; they **do not** promote the tier to full access.
+- Trusted folders count on every tier (AI review, high-risk-only and autopilot included): an operation inside one is
+  approved without asking you and without spending a reviewer call, though never past that tier's `alwaysAsk` list.
+  A full-access widening is auto-approved only on the trusted / high-risk-only tiers, and only when the target path
+  itself is trusted; on the AI tier it always asks.
 - The reviewer model sees the command text and working directory, not the command's real side effects; its judgment is only used to reduce interruptions.
 - After an approval hold, the previous dialog is still on screen; reopening it no longer affects the model (that step has already ended as "deferred").
 - Sub-sessions inherit the parent conversation's tier by default; if the parent changes tiers, sub-sessions that are already running do not follow.

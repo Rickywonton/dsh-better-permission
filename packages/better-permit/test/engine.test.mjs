@@ -118,6 +118,36 @@ check('path prefix trap asks', decidePath({ path: join(TRUSTED_EVIL, 'out.txt') 
 check('workspace path asks', decidePath({ path: join(WS, 'a.txt') }).allow, false)
 check('no path asks', decidePath({}).allow, false)
 
+// Trusted folders are a statement about a folder, not about one tier's gates:
+// they count on every tier, and never beat the always-ask list.
+function decideOnTier(tier, tool, args, reason) {
+  return decideApproval({
+    request: { toolName: tool, reason },
+    snapshot: { tool, args },
+    tier,
+    rules: tiers[tier],
+    trust: pathTrust,
+    settings,
+    risk: classify({ tool, args }, { base: WS, shellTools: new Set(settings.shellTools) }),
+  })
+}
+
+console.log('trusted folders on every tier')
+check('edits tier: trusted path widens', decideOnTier('workspace-write-edits', 'write', { path: join(TRUSTED, 'a.txt') }, 'escalate sandbox to workspace-write: write').allow, true)
+check('edits tier: trusted path without escalation', decideOnTier('workspace-write-edits', 'write', { path: join(TRUSTED, 'a.txt') }, 'write a file').allow, true)
+check('edits tier: neighbour folder still asks', decideOnTier('workspace-write-edits', 'write', { path: join(TRUSTED_EVIL, 'a.txt') }, 'escalate sandbox to workspace-write: write').allow, false)
+check('ai tier: trusted path skips the reviewer', (() => {
+  const decision = decideOnTier('workspace-write-ai', 'write', { path: join(TRUSTED, 'a.txt') }, 'escalate sandbox to workspace-write: write')
+  return decision.allow === true && decision.ai !== true
+})(), true)
+check('ai tier: untrusted path goes to the reviewer', decideOnTier('workspace-write-ai', 'write', { path: join(sandboxRoot, 'elsewhere', 'a.txt') }, 'escalate sandbox to workspace-write: write').ai, true)
+check('ai tier: full access still asks', decideOnTier('workspace-write-ai', 'write', { path: join(TRUSTED, 'a.txt') }, 'escalate sandbox to danger-full-access: write').allow, false)
+check('guarded tier: trusted path widens to full access', decideOnTier('workspace-write-guarded', 'write', { path: join(TRUSTED, 'a.txt') }, 'escalate sandbox to danger-full-access: write').allow, true)
+check('guarded tier: untrusted path asks', decideOnTier('workspace-write-guarded', 'write', { path: join(sandboxRoot, 'elsewhere', 'a.txt') }, 'escalate sandbox to danger-full-access: write').allow, false)
+check('autopilot tier: trusted path allowed', decideOnTier('workspace-write-autopilot', 'write', { path: join(TRUSTED, 'a.txt') }, 'escalate sandbox to danger-full-access: write').allow, true)
+check('trust never beats always-ask', decideOnTier('workspace-write-ai', 'pwsh', { command: 'Remove-Item C:/Windows/System32/x.dll', cwd: TRUSTED }, 'escalate sandbox to workspace-write: delete').allow, false)
+check('a trusted workdir does not vouch for a delete', decideOnTier('workspace-write-ai', 'pwsh', { command: 'rm -rf *', cwd: TRUSTED }, 'escalate sandbox to workspace-write: clean').ai, true)
+
 console.log('tier: autopilot')
 const auto = 'workspace-write-autopilot'
 check('any escalation allowed', decide({ tool: 'pwsh', args: { command: 'anything' } }, 'escalate sandbox to danger-full-access: x', auto).allow, true)

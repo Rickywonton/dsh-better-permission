@@ -672,6 +672,7 @@ export function apply(ctx, config) {
     lines.push(global.length === 0 ? '全局受信文件夹：（暂无）' : `全局受信文件夹 ${global.join(', ')}`)
     const scoped = sessionTrust.list(sessionIdOf(agent?.session))
     lines.push(scoped.length === 0 ? '本对话受信文件夹：（暂无）' : `本对话受信文件夹 ${scoped.join(', ')}`)
+    lines.push('受信范围：所有档位都生效（AI 判定 / 高危才问 / 自动放行同样算数），但不越过「始终询问」清单；完全访问提权只在受信放行与高危才问档、且目标路径本身就受信时才放行。')
     const recent = journal.list()
     lines.push(recent.length === 0 ? '自动放行记录：（暂无）' : '自动放行记录：')
     for (const entry of recent.slice(0, 8)) {
@@ -1103,6 +1104,8 @@ export function apply(ctx, config) {
             'Some approval requests may be auto-approved by the active permission tier without asking the user:',
             'plugin listing/toggling/installing, and on the wider tiers operations graded at or below the tier\'s risk',
             'ceiling (read / write / destructive), plus commands the user allowed for this conversation.',
+            'Operations whose target lies in a folder the user trusted (this conversation or machine-wide) are approved',
+            'on every tier, including the AI and autopilot tiers.',
             'On the "AI 判定" tier an operation above that ceiling may instead be judged by the user\'s own reviewer model;',
             'its approval runs the call, its doubt or refusal still reaches the user.',
             'An approval dialog that does appear means the tier refused that operation on purpose — report it to the',

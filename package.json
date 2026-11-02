@@ -1,6 +1,6 @@
 {
   "name": "better-permit-monorepo",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "description": "Permission tiers for DeepSeek Harness: graded auto-approval, instruction risk grading, trusted folders and per-conversation allow rules.",
   "license": "MIT",

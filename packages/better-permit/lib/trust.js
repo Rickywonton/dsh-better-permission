@@ -109,7 +109,7 @@ function pathVerdict(candidates, trust) {
   if (outside.length > 0) {
     return { ok: false, reason: `outside the trusted paths: ${outside.slice(0, 3).join(', ')}` }
   }
-  return { ok: true, detail: `trusted path ${candidates[0]}` }
+  return { ok: true, scope: 'path', detail: `trusted path ${candidates[0]}` }
 }
 
 /**
@@ -124,7 +124,7 @@ export function checkTrust({ tool, args, trust, mode }) {
     const meta = firstMetacharacter(normalized)
     if (meta) return { ok: false, reason: `command contains the shell metacharacter ${JSON.stringify(meta)}` }
     const hit = trust.commands.find((prefix) => matchesPrefix(normalized, prefix))
-    if (hit) return { ok: true, detail: `trusted command "${hit}"` }
+    if (hit) return { ok: true, scope: 'command', detail: `trusted command "${hit}"` }
     // A folder trusted from the approval prompt covers plain commands started
     // there — but only for the narrow workspace escalation: full access still
     // needs an explicitly trusted command.
@@ -133,7 +133,7 @@ export function checkTrust({ tool, args, trust, mode }) {
       if (workdir) {
         const absolute = resolve(trust.base, workdir.trim())
         const root = trust.paths.find((path) => isInside(absolute, path))
-        if (root) return { ok: true, detail: `command started in the trusted folder ${root}` }
+        if (root) return { ok: true, scope: 'workdir', detail: `command started in the trusted folder ${root}` }
       }
     }
     return { ok: false, reason: 'command does not start with a trusted prefix' }
@@ -154,12 +154,12 @@ export function checkInstallTarget(target, trust) {
     if (!trust.paths.some((root) => isInside(absolute, root))) {
       return { ok: false, reason: `${text} is outside the trusted paths` }
     }
-    return { ok: true, detail: `trusted local path ${text}` }
+    return { ok: true, scope: 'path', detail: `trusted local path ${text}` }
   }
   const name = packageNameOf(text)
   const hit = trust.packages.find((pattern) => matchesPackage(name, pattern))
   if (!hit) return { ok: false, reason: `${name} is not a trusted package` }
-  return { ok: true, detail: `trusted package ${name}` }
+  return { ok: true, scope: 'package', detail: `trusted package ${name}` }
 }
 
 /**

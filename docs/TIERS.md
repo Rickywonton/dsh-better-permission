@@ -122,11 +122,18 @@ off  <  read  <  write  <  destructive  =  system  <  publish  <  all
 
 1. 插件管理动作 → 走 `plugin` 门（`remove` / `exemption` 永远询问）
 2. **本对话放行规则命中** → 放行
-3. 风险在 `alwaysAsk` 里 → 询问
-4. 沙箱提权 → 看 `escalate`；`gate === 'all'` 且超上限时，若档位 `ai: true` 且目标是
-   `workspace-write`，交给评审模型；`danger-full-access` 永远走确定性闸门
-5. 非提权请求：超 `maxRisk` 且 `ai: true` → 交给评审模型；在上限内且 `ai: true` → 直接放行
-6. 其余 → 看 `otherAsks`
+3. 风险在 `alwaysAsk` 里 → 询问（受信文件夹也绕不过这一步）
+4. 算一次受信判定（`checkTrust`，命令取受信前缀 / 受信工作目录，路径取受信目录）：
+   `read` / `write` / `outside` 命中即视为「受信覆盖」；`destructive` 只有 `scope === 'path'`
+   （受信的就是被删路径）才算覆盖
+5. 沙箱提权 → 看 `escalate`：`gate === 'all'` 先看 `maxRisk`，超上限但**受信覆盖**则放行；
+   否则 `ai: true` 且目标是 `workspace-write` 交给评审模型；`danger-full-access` 不受信覆盖时永远走确定性闸门。
+   `gate === 'trusted'` 用受信判定做安全边界（路径受信即放行 `outside`），`gate === 'off'` 一律询问
+6. 非提权请求：超 `maxRisk` 但**受信覆盖** → 放行；否则 `ai: true` 交给评审模型
+7. 在上限内：`ai: true` 直接放行；否则看 `otherAsks`
+
+受信覆盖在所有档位都生效（`workspace-write-edits` / `-trusted` / `-ai` / `-guarded` / `-autopilot`），
+这就是「受信文件夹不受档位口径限制」的实现位置；它排在 `alwaysAsk` 之后，所以硬停机依然有效。
 
 任何一步"询问"都会调用 `next()`，把请求交回内置应答器；`holdMs > 0` 时这一步会加上超时，
 超时以 `rejected` 结束并排一条暂缓通知。界面和 `never` 策略的行为与不装插件时一致。

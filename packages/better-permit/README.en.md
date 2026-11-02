@@ -205,7 +205,8 @@ always ask even when they are below the ceiling.
 
 The approval dialog shows a button: **Trust this folder and allow this call (this conversation only)**. It adds the directory the operation points at
 (the working directory for commands, the containing directory for file operations) to **this conversation's** trusted list and approves the current call;
-afterwards, under the "trusted" tier and wider, sandbox escalation for that directory passes automatically, while other directories still ask.
+afterwards, operations inside that directory pass automatically on **every tier** (the AI tier stops consulting the reviewer model for them too),
+while other directories behave as before.
 
 Besides the per-conversation list there is a trusted-folder list **shared by all conversations** (managed in the Settings panel);
 the two lists are merged at decision time, and the per-conversation one only applies in its own conversation.
@@ -220,8 +221,12 @@ the two lists are merged at decision time, and the per-conversation one only app
 Key points:
 
 - It only applies to **this conversation** and does not affect other conversations; it is written to `kv` storage and survives a restart (it degrades to in-process when there is no storage).
-- It only widens the escalation decision **into** the `workspace-write` sandbox; it **does not** give commands in that directory full access,
-  and it does not bypass the trusted command prefix checks.
+- The trust verdict is taken before the tier ceiling: a trusted hit ignores `maxRisk` and never reaches the reviewer model, but it
+  **cannot** beat the tier's `alwaysAsk` list (for example system / publish on the AI and high-risk-only tiers).
+- Full-access escalation is the exception: the AI tier switches that gate `off`, so it always asks; the trusted and high-risk-only
+  tiers do auto-approve a full-access widening whose target path is itself trusted.
+- A delete is auto-approved only when the thing trusted is the path being deleted; "the command ran in this trusted folder" is not
+  "whatever it deletes counts", so a trusted working directory alone does not clear `rm -rf`.
 - The panel button only trusts the Host-side snapshot of "the call currently waiting for approval": with no pending call the endpoint returns 409,
   so a client cannot write a directory out of thin air.
 - `/trust` is an explicit human command; adding a directory with it does not need a pending call.
@@ -271,7 +276,7 @@ to a package after it was installed is never discovered. The browser half is the
 ## Development
 
 ```pwsh
-node test/engine.test.mjs    # 198 offline checks: risk grading, tier ceilings, trust decisions, allow rules, reviewer model, habits, deferral, approval explanation, per-turn report, waterfall integration, commands, loopback API, panel endpoints
+node test/engine.test.mjs    # 209 offline checks: risk grading, tier ceilings, trust decisions, allow rules, reviewer model, habits, deferral, approval explanation, per-turn report, waterfall integration, commands, loopback API, panel endpoints
 ```
 
 The browser half lives next door in `../better-permit-ui` (`better-permit-ui`): `client.js` and its own smoke test (`node test/client.smoke.mjs`).

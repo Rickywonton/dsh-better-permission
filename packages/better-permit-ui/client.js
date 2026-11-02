@@ -24,7 +24,7 @@ window.__ModuleLoader__.load({
       nav: '权限与信任',
       title: '权限与信任',
       intro:
-        '受信文件夹只放宽「工作区内」沙箱提权：对受信文件夹内的普通命令和文件改动，受信档位会自动放行；它不会让插件获得完全访问权限。卸载插件、版本豁免和安装脚本在任何档位下都会询问。',
+        '受信文件夹在所有档位都生效（含 AI 判定、高危才问、自动放行）：文件夹内的普通命令与文件改动直接放行，既不问你，也不再去问评审模型。它不会绕过「始终询问」清单，AI 判定档里也不会替你批准完全访问。卸载插件、版本豁免和安装脚本在任何档位下都会询问。',
       tierTitle: '档位与自动放行范围',
       tierHint: '从窄到宽排列。「自动放行上限」是本档位愿意自己批准的风险上限，超过它就一定问你；「始终询问」列出即使在上限内也不放行的风险。',
       riskTitle: '风险分级',
@@ -127,7 +127,7 @@ window.__ModuleLoader__.load({
       nav: 'Permissions',
       title: 'Permissions',
       intro:
-        'Trusted folders only widen the "workspace" sandbox escalation: plain commands and file changes inside them are auto-approved on the trusted tiers. They never grant full access. Removing a plugin, version exemptions, and install scripts always ask.',
+        'Trusted folders count on every tier — AI review, high-risk-only and autopilot included: plain commands and file changes inside them are approved without asking you and without spending a reviewer call. They never bypass the always-ask list, and on the AI tier they do not clear a full-access widening. Removing a plugin, version exemptions, and install scripts always ask.',
       tierTitle: 'Tiers and what they approve',
       tierHint: 'Narrow to wide. "Ceiling" is the most dangerous operation the tier approves on its own; anything above it always asks. "Always asks" lists levels it refuses even below the ceiling.',
       riskTitle: 'Risk levels',
